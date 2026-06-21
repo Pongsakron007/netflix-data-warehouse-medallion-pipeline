@@ -61,9 +61,9 @@ class SilverLayerTests:
         # Test hash key generation
         print("\n📋 Testing get_hash_key_value method...")
         sample_df = self.spark.createDataFrame([
-            ("s1", "Movie", "Test Movie", "2021", "PG-13", "90 min", 
+            ("s1", "Movie", "Test Movie", "2021-01-15", "2021", "PG-13", "90 min", 
              "Test,Cast", "Test Director", "USA", "Action,Drama", "desc", 1)
-        ], ["show_id", "type", "title", "release_year", "rating", "duration",
+        ], ["show_id", "type", "title", "date_added", "release_year", "rating", "duration",
             "cast", "director", "country", "listed_in", "description", "_sk"])
         
         hash_df = self.silver.get_hash_key_value(sample_df)
@@ -221,17 +221,17 @@ class SilverLayerTests:
         print("\n📋 Creating test records...")
         
         test_data = [
-            # New records
-            ("TEST_SCD_001", "Movie", "Original Title 1", 2020, "PG", 
-             "90 min", "desc1", 1001),
-            ("TEST_SCD_002", "TV Show", "Original Title 2", 2021, "TV-14", 
-             "2 Seasons", "desc2", 1002),
+            # New records (with all required columns)
+            ("TEST_SCD_001", "Movie", "Original Title 1", "2020-01-15", 2020, "PG", 
+             "90 min", "Test Actor", "Test Director", "USA", "Action", "desc1", 1001),
+            ("TEST_SCD_002", "TV Show", "Original Title 2", "2021-03-10", 2021, "TV-14", 
+             "2 Seasons", "Test Actor 2", "Test Director 2", "Canada", "Drama", "desc2", 1002),
         ]
         
         df_batch1 = self.spark.createDataFrame(
             test_data,
-            ["show_id", "type", "title", "release_year", "rating", 
-             "duration", "description", "_sk"]
+            ["show_id", "type", "title", "date_added", "release_year", "rating", 
+             "duration", "cast", "director", "country", "listed_in", "description", "_sk"]
         ).withColumn("load_dt", current_date()).withColumn("load_dttm", current_timestamp())
         
         # Generate hash keys
@@ -253,16 +253,16 @@ class SilverLayerTests:
         
         # Create changed records (same keys, different data)
         changed_data = [
-            ("TEST_SCD_001", "Movie", "CHANGED Title 1", 2020, "PG-13",  # Title & rating changed
-             "90 min", "desc1 updated", 2001),
-            ("TEST_SCD_002", "TV Show", "Original Title 2", 2021, "TV-14",  # No change
-             "2 Seasons", "desc2", 2002),
+            ("TEST_SCD_001", "Movie", "CHANGED Title 1", "2020-01-15", 2020, "PG-13",  # Title & rating changed
+             "90 min", "Test Actor", "Test Director", "USA", "Action", "desc1 updated", 2001),
+            ("TEST_SCD_002", "TV Show", "Original Title 2", "2021-03-10", 2021, "TV-14",  # No change
+             "2 Seasons", "Test Actor 2", "Test Director 2", "Canada", "Drama", "desc2", 2002),
         ]
         
         df_batch2 = self.spark.createDataFrame(
             changed_data,
-            ["show_id", "type", "title", "release_year", "rating", 
-             "duration", "description", "_sk"]
+            ["show_id", "type", "title", "date_added", "release_year", "rating", 
+             "duration", "cast", "director", "country", "listed_in", "description", "_sk"]
         ).withColumn("load_dt", current_date()).withColumn("load_dttm", current_timestamp())
         
         batch2_with_hash = self.silver.get_hash_key_value(df_batch2)
