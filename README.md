@@ -289,8 +289,8 @@ config_table columns:
                     │                                              │
                     │                                              │
                     └───────────────┐              ┌───────────────┘
-                              ∞ (Many)│              │ ∞ (Many)
-                                      ▼              ▼
+                            ∞ (Many)│              │ ∞ (Many)
+                                    ▼              ▼
                         ┌────────────────────────────────────────┐
                         │        dim_titles_silver               │
                         │      (Main Dimension Table)            │
@@ -315,8 +315,8 @@ config_table columns:
                         │ Metadata  │ load_dt                    │
                         │           │ load_dttm                  │
                         └────────────────────────────────────────┘
-                                      ▲              ▲
-                              ∞ (Many)│              │ ∞ (Many)
+                                    ▲              ▲
+                            ∞ (Many)│              │ ∞ (Many)
                     ┌───────────────┘              └───────────────┐
                     │                                              │
                     │                                              │
