@@ -267,6 +267,92 @@ config_table columns:
 | `load_dt` | DATE | Rejection date |
 | `load_dttm` | TIMESTAMP | Rejection timestamp |
 
+### Star Schema Visual Diagram
+
+```text
+
+       [ Sub-Dimension: Directors ]                       [ Sub-Dimension: Cast ]
+          dim_directors_silver                             dim_cast_silver
+         ┌──────────────────────┐                         ┌──────────────────┐
+         │ PK  │ director_sk    │                         │ PK  │ cast_sk    │
+         │     │ director_name  │                         │     │ cast_name  │
+         └──────────┬───────────┘                         └────────┬─────────┘
+                    │ (1)                                          │ (1)
+                    ▼                                              ▼
+                    ∞ (Many)                                       ∞ (Many)
+       [ Bridge Table ]                                   [ Bridge Table ]
+         bridge_title_director                            bridge_title_cast
+         ┌──────────────────────┐                         ┌──────────────────┐
+         │ FK  │ title_sk       │                         │ FK  │ title_sk   │
+         │ FK  │ director_sk    │                         │ FK  │ cast_sk    │
+         └──────────┬───────────┘                         └────────┬─────────┘
+                    │                                              │
+                    │                                              │
+                    └───────────────┐              ┌───────────────┘
+                              ∞ (Many)│              │ ∞ (Many)
+                                      ▼              ▼
+                        ┌────────────────────────────────────────┐
+                        │        dim_titles_silver               │
+                        │      (Main Dimension Table)            │
+                        ├────────────────────────────────────────┤
+                        │ PK        │ title_sk                   │
+                        │           │ show_id                    │
+                        │           │ title                      │
+                        │           │ type                       │
+                        │           │ release_year               │
+                        │           │ rating                     │
+                        │           │ duration                   │
+                        │           │ description                │
+                        │           │ date_added                 │
+                        ├────────────────────────────────────────┤
+                        │ Hashing   │ hash_key                   │
+                        │           │ hash_value                 │
+                        ├────────────────────────────────────────┤
+                        │ SCD Type 2│ active_flag                │
+                        │           │ start_date                 │
+                        │           │ end_date                   │
+                        ├────────────────────────────────────────┤
+                        │ Metadata  │ load_dt                    │
+                        │           │ load_dttm                  │
+                        └────────────────────────────────────────┘
+                                      ▲              ▲
+                              ∞ (Many)│              │ ∞ (Many)
+                    ┌───────────────┘              └───────────────┐
+                    │                                              │
+                    │                                              │
+         ┌──────────┴───────────┐                         ┌────────┴─────────┐
+         │ FK  │ title_sk       │                         │ FK  │ title_sk   │
+         │ FK  │ country_sk     │                         │ FK  │ category_sk│
+         └──────────────────────┘                         └──────────────────┘
+          bridge_title_country                             bridge_title_category
+                    ▲                                              ▲
+                    │ ∞ (Many)                                     │ ∞ (Many)
+                    │ (1)                                          │ (1)
+         ┌──────────┴───────────┐                         ┌────────┴─────────┐
+         │ PK  │ country_sk     │                         │ PK  │ category_sk│
+         │     │ country_name   │                         │     │category_name│
+         └──────────────────────┘                         └──────────────────┘
+        [ Sub-Dimension: Countries ]                      [ Sub-Dimension: Categories ]
+          dim_countries_silver                            dim_categories_silver
+
+```
+
+**Legend**:
+- **PK** = Primary Key
+- **FK** = Foreign Key
+- **(1)** = One side of relationship
+- **∞ (Many)** = Many side of relationship
+- **Main Dimension** = Central fact table with SCD Type 2
+- **Sub-Dimensions** = Lookup/master data tables
+- **Bridge Tables** = Many-to-many relationship tables
+
+**Cardinality Explanation**:
+- **One Director** → **Many Titles** (via bridge_title_director)
+- **One Cast Member** → **Many Titles** (via bridge_title_cast)
+- **One Country** → **Many Titles** (via bridge_title_country)
+- **One Category** → **Many Titles** (via bridge_title_category)
+- Each title can have multiple directors, cast members, countries, and categories
+
 ---
 
 ## 🚀 Getting Started
