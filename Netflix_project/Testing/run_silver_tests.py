@@ -101,6 +101,11 @@ print("Ready to run tests with clean data!")
 
 # COMMAND ----------
 
+# DBTITLE 1,Load Framework Classes
+# MAGIC %run "/Users/pongsakronk009@hotmail.com/Databricks-for-Data-Engineers-Bootcamp2/Netflix_project/framework"
+
+# COMMAND ----------
+
 # DBTITLE 1,Run All Tests
 # =============================================================================
 # RUN ALL TESTS - COMPREHENSIVE VALIDATION
