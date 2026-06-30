@@ -1,6 +1,6 @@
 {
   "name": "Netflix_Data_Pipeline_Workflow",
-  "description": "Netflix Bronze-to-Silver ETL workflow with SCD Type 2 processing",
+  "description": "Netflix Bronze-to-Silver-to-Gold ETL workflow with SCD Type 2 processing",
   "email_notifications": {
     "no_alert_for_skipped_runs": false
   },
@@ -33,6 +33,25 @@
       "run_if": "ALL_SUCCESS",
       "notebook_task": {
         "notebook_path": "{{WORKSPACE_PATH}}/silver_Netflix/silver_fw_config",
+        "base_parameters": {
+          "pipeline_name": "netflix"
+        },
+        "source": "WORKSPACE"
+      },
+      "timeout_seconds": 0,
+      "email_notifications": {},
+      "disabled": false
+    },
+    {
+      "task_key": "Netflix_Gold",
+      "depends_on": [
+        {
+          "task_key": "Netflix_Silver"
+        }
+      ],
+      "run_if": "ALL_SUCCESS",
+      "notebook_task": {
+        "notebook_path": "{{WORKSPACE_PATH}}/gold_Netflix/gold_fw_config",
         "base_parameters": {
           "pipeline_name": "netflix"
         },
