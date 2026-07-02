@@ -103,9 +103,18 @@ This project implements a **scalable, production-ready data pipeline** for proce
   - Bad record audit trail
 
 #### 🥇 **Gold Layer** - Analytics & Aggregations
-- **Purpose**: Business-specific aggregations and metrics
-- **Characteristics**: Denormalized, pre-aggregated, optimized for queries
-- **Examples**: Monthly content additions, top genres, director statistics
+- **Purpose**: Business-ready aggregations and denormalized analytics tables
+- **Characteristics**: Denormalized, pre-aggregated, optimized for BI tools
+- **Components**: `GoldLayer` class
+- **Features**:
+  - Denormalized fact tables (flatten many-to-many relationships)
+  - Pre-computed aggregations and KPIs
+  - Current data only (`active_flag = True` from Silver)
+  - Full refresh pattern (`mode("overwrite")`)
+  - Optimized for dashboards and self-service BI
+- **Tables Created**:
+  - `netflix_content_by_cast_gold` - Denormalized title-cast relationships
+  - `netflix_yearly_content_trends_gold` - Aggregated yearly content metrics
 
 ---
 
@@ -138,7 +147,9 @@ Netflix_project/
     ├── workspace.netflix.bridge_title_director_silver
     ├── workspace.netflix.bridge_title_country_silver
     ├── workspace.netflix.bridge_title_category_silver
-    └── workspace.netflix.netflix_bronze_bad_record # Bad record audit
+    ├── workspace.netflix.netflix_bronze_bad_record # Bad record audit
+    ├── workspace.netflix.netflix_content_by_cast_gold # Denormalized cast (Gold)
+    └── workspace.netflix.netflix_yearly_content_trends_gold # Yearly trends (Gold)
 ```
 
 ---
@@ -204,6 +215,38 @@ config_table columns:
 - `load_main_dimension()` - SCD Type 2 upserts
 - `process_cdf_stream_to_silver()` - Orchestrate full pipeline
 
+### 4. Gold Layer (`GoldLayer` class)
+
+**Responsibilities**:
+- Create denormalized analytical tables
+- Pre-compute business metrics and KPIs
+- Filter for current data only (`active_flag = True`)
+- Optimize for dashboard and BI tool consumption
+- Full refresh pattern (overwrite mode)
+
+**Key Methods**:
+
+#### Denormalized Tables:
+- `create_gold_content_by_cast()` - Flatten title-cast many-to-many relationships
+  - Joins: `dim_titles_silver` ⋈ `bridge_title_cast_silver` ⋈ `dim_cast_silver`
+  - Output: One row per title-cast combination
+  - Business Question: "Which cast members performed in what titles?"
+
+- `create_gold_yearly_content_trends()` - Aggregate content volume by year and type
+  - Aggregation: `GROUP BY release_year, type`
+  - Metric: Count of titles
+  - Business Question: "How has content volume changed by year and type?"
+
+#### Pipeline Orchestration:
+- `from_config_table(pipeline_name)` - Factory method from config
+- `run_gold_pipeline()` - Execute all gold table creation methods
+
+**Gold Table Characteristics**:
+- **Write Mode**: Always `overwrite` (full refresh)
+- **Data Freshness**: Reflects latest Silver layer state
+- **Query Performance**: Pre-joined and pre-aggregated for speed
+- **Use Case**: Dashboards, reports, ad-hoc analysis, self-service BI
+
 ---
 
 ## 📊 Table Schema
@@ -266,6 +309,54 @@ config_table columns:
 | `batch_id` | INT | Batch identifier |
 | `load_dt` | DATE | Rejection date |
 | `load_dttm` | TIMESTAMP | Rejection timestamp |
+
+### Gold Layer Tables
+
+#### 1. Denormalized Table: `netflix_content_by_cast_gold`
+
+**Purpose**: Pre-joined title and cast information for fast queries  
+**Refresh Pattern**: Full overwrite on each run  
+**Data Source**: `dim_titles_silver` (active only) + `bridge_title_cast_silver` + `dim_cast_silver`
+
+**Schema**:
+| Column | Type | Description |
+|--------|------|-------------|
+| `show_id` | STRING | Business key |
+| `title` | STRING | Content title |
+| `type` | STRING | Movie or TV Show |
+| `release_year` | INT | Year of release |
+| `rating` | STRING | Content rating |
+| `duration` | STRING | Runtime or seasons |
+| `description` | STRING | Synopsis |
+| `date_added` | DATE | Date added to Netflix |
+| `cast_id` | STRING | Cast member surrogate key |
+| `cast_name` | STRING | Actor/Cast member name |
+| All other dim_titles columns | VARIOUS | Inherited from Silver dimension |
+
+**Row Count**: ~128,000+ rows (one per title-cast combination)  
+**Business Questions Answered**:
+- Which cast members performed in what titles?
+- What titles did a specific actor appear in?
+- Which cast members collaborate most frequently?
+
+#### 2. Aggregated Table: `netflix_yearly_content_trends_gold`
+
+**Purpose**: Pre-aggregated content volume metrics by year and type  
+**Refresh Pattern**: Full overwrite on each run  
+**Data Source**: `dim_titles_silver` (active only), aggregated by `release_year` and `type`
+
+**Schema**:
+| Column | Type | Description |
+|--------|------|-------------|
+| `release_year` | INT | Year of content release |
+| `type` | STRING | Movie or TV Show |
+| `total_title` | BIGINT | Count of titles released |
+
+**Row Count**: ~150 rows (one per year-type combination)  
+**Business Questions Answered**:
+- How has content volume changed over time?
+- What's the movie-to-TV-show ratio by year?
+- Which years had the highest content production?
 
 ### Star Schema Visual Diagram
 
@@ -427,7 +518,23 @@ s.process_cdf_stream_to_silver(
 )
 ```
 
-### Step 4: Verify Results
+### Step 4: Run Gold Layer
+
+```python
+from framework import GoldLayer
+
+# Initialize from configuration
+g = GoldLayer.from_config_table("netflix")
+
+# Create all gold tables
+g.run_gold_pipeline()
+
+# Verify gold tables
+spark.table("workspace.netflix.netflix_content_by_cast_gold").display()
+spark.table("workspace.netflix.netflix_yearly_content_trends_gold").display()
+```
+
+### Step 5: Verify Results
 
 ```python
 # Check main dimension
@@ -641,6 +748,73 @@ StarSchemaQueries.query_content_by_country(spark, limit=15)
 StarSchemaQueries.query_genre_analysis(spark, limit=15)
 StarSchemaQueries.query_multidimensional_analysis(spark, limit=10)
 StarSchemaQueries.query_scd_history(spark)
+```
+
+### Example 7: Gold Layer - Content by Cast Analysis (Fast!)
+
+```sql
+-- Pre-joined and denormalized - no complex joins needed!
+SELECT 
+    cast_name,
+    COUNT(DISTINCT show_id) as total_titles,
+    COUNT(DISTINCT CASE WHEN type = 'Movie' THEN show_id END) as movies,
+    COUNT(DISTINCT CASE WHEN type = 'TV Show' THEN show_id END) as tv_shows
+FROM workspace.netflix.netflix_content_by_cast_gold
+GROUP BY cast_name
+ORDER BY total_titles DESC
+LIMIT 10
+```
+
+### Example 8: Gold Layer - Yearly Content Trends
+
+```sql
+-- Pre-aggregated metrics - instant results!
+SELECT 
+    release_year,
+    SUM(CASE WHEN type = 'Movie' THEN total_title ELSE 0 END) as movies,
+    SUM(CASE WHEN type = 'TV Show' THEN total_title ELSE 0 END) as tv_shows,
+    SUM(total_title) as total_content
+FROM workspace.netflix.netflix_yearly_content_trends_gold
+WHERE release_year >= 2015
+GROUP BY release_year
+ORDER BY release_year DESC
+```
+
+### Example 9: Gold Layer - Actor Collaboration Network
+
+```sql
+-- Find actors who frequently work together
+SELECT 
+    a.cast_name as actor1,
+    b.cast_name as actor2,
+    COUNT(DISTINCT a.show_id) as collaborations
+FROM workspace.netflix.netflix_content_by_cast_gold a
+JOIN workspace.netflix.netflix_content_by_cast_gold b
+    ON a.show_id = b.show_id 
+    AND a.cast_id < b.cast_id  -- Avoid duplicates
+GROUP BY actor1, actor2
+HAVING COUNT(DISTINCT a.show_id) >= 3
+ORDER BY collaborations DESC
+LIMIT 20
+```
+
+### Example 10: Gold Layer - Movie-to-TV Ratio Trend
+
+```sql
+-- Analyze content strategy shifts over time
+SELECT 
+    release_year,
+    MAX(CASE WHEN type = 'Movie' THEN total_title END) as movie_count,
+    MAX(CASE WHEN type = 'TV Show' THEN total_title END) as tv_count,
+    ROUND(
+        MAX(CASE WHEN type = 'Movie' THEN total_title END) * 100.0 / 
+        NULLIF(MAX(CASE WHEN type = 'TV Show' THEN total_title END), 0),
+        2
+    ) as movie_to_tv_ratio_pct
+FROM workspace.netflix.netflix_yearly_content_trends_gold
+WHERE release_year >= 2010
+GROUP BY release_year
+ORDER BY release_year DESC
 ```
 
 ---

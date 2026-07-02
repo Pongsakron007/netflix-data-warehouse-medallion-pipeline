@@ -117,8 +117,10 @@ Netflix_project/
 ├── framework.ipynb                      # การใช้งานไปป์ไลน์หลัก
 │   ├── คลาส BronzeLayer                # โลจิกการรับข้อมูล Bronze
 │   ├── คลาส SilverLayer                # โลจิกการแปลง Silver
+│   ├── คลาส GoldLayer                  # โลจิกการรวมกลุ่ม Gold
 │   ├── เอกสาร Bronze (markdown)         # คู่มือ Bronze แบบทีละขั้นตอน
-│   └── เอกสาร Silver (markdown)         # คู่มือ Silver แบบทีละขั้นตอน
+│   ├── เอกสาร Silver (markdown)         # คู่มือ Silver แบบทีละขั้นตอน
+│   └── เอกสาร Gold (markdown)           # คู่มือ Gold แบบทีละขั้นตอน
 │
 ├── silver_layer_tests.py                # ชุดทดสอบครอบคลุม
 │   ├── คลาส SilverLayerTests           # วิธีทดสอบอัตโนมัติ 5 วิธี
@@ -204,6 +206,38 @@ Netflix_project/
 - `load_bridge_tables()` - โหลดความสัมพันธ์แบบ many-to-many
 - `load_main_dimension()` - SCD Type 2 upserts
 - `process_cdf_stream_to_silver()` - จัดการไปป์ไลน์ทั้งหมด
+
+### 4. ชั้น Gold (`GoldLayer` class)
+
+**ความรับผิดชอบ**:
+- สร้างตารางการวิเคราะห์แบบ Denormalized
+- คำนวณเมตริกทางธุรกิจและ KPI ล่วงหน้า
+- กรองเฉพาะข้อมูลปัจจุบัน (`active_flag = True`)
+- เหมาะสำหรับ Dashboard และเครื่องมือ BI
+- รูปแบบการรีเฟรชแบบเต็ม (โหมด overwrite)
+
+**เมธอดหลัก**:
+
+#### ตาราง Denormalized:
+- `create_gold_content_by_cast()` - รวมความสัมพันธ์ Title-Cast แบบ Many-to-Many
+  - Joins: `dim_titles_silver` ⋈ `bridge_title_cast_silver` ⋈ `dim_cast_silver`
+  - Output: หนึ่งแถวต่อ Title-Cast หนึ่งคู่
+  - คำถามทางธุรกิจ: "นักแสดงคนไหนแสดงในเรื่องอะไรบ้าง?"
+
+- `create_gold_yearly_content_trends()` - รวมกลุ่มปริมาณเนื้อหาตามปีและประเภท
+  - การรวมกลุ่ม: `GROUP BY release_year, type`
+  - เมตริก: นับจำนวนเรื่อง
+  - คำถามทางธุรกิจ: "ปริมาณเนื้อหาเปลี่ยนแปลงตามปีและประเภทอย่างไร?"
+
+#### การจัดการไปป์ไลน์:
+- `from_config_table(pipeline_name)` - Factory method จากการตั้งค่า
+- `run_gold_pipeline()` - รันเมธอดสร้างตาราง Gold ทั้งหมด
+
+**ลักษณะตาราง Gold**:
+- **โหมดการเขียน**: เสมอ `overwrite` (รีเฟรชแบบเต็ม)
+- **ความทันสมัยของข้อมูล**: สะท้อนสถานะล่าสุดของชั้น Silver
+- **ประสิทธิภาพ Query**: รวม Join และรวมกลุ่มไว้ล่วงหน้าเพื่อความเร็ว
+- **การใช้งาน**: Dashboard, รายงาน, การวิเคราะห์ Ad-hoc, Self-service BI
 
 ---
 
@@ -428,7 +462,23 @@ s.process_cdf_stream_to_silver(
 )
 ```
 
-### ขั้นตอนที่ 4: ตรวจสอบผลลัพธ์
+### ขั้นตอนที่ 4: เรียกใช้ชั้น Gold
+
+```python
+from framework import GoldLayer
+
+# เริ่มต้นจากการตั้งค่า
+g = GoldLayer.from_config_table("netflix")
+
+# สร้างตาราง Gold ทั้งหมด
+g.run_gold_pipeline()
+
+# ตรวจสอบตาราง Gold
+spark.table("workspace.netflix.netflix_content_by_cast_gold").display()
+spark.table("workspace.netflix.netflix_yearly_content_trends_gold").display()
+```
+
+### ขั้นตอนที่ 5: ตรวจสอบผลลัพธ์
 
 ```python
 # ตรวจสอบมิติหลัก
@@ -642,6 +692,73 @@ StarSchemaQueries.query_content_by_country(spark, limit=15)
 StarSchemaQueries.query_genre_analysis(spark, limit=15)
 StarSchemaQueries.query_multidimensional_analysis(spark, limit=10)
 StarSchemaQueries.query_scd_history(spark)
+```
+
+### ตัวอย่างที่ 7: ชั้น Gold - การวิเคราะห์เนื้อหาตามนักแสดง (เร็ว!)
+
+```sql
+-- รวม Join และ Denormalized ไว้แล้ว - ไม่ต้อง Join ซับซ้อน!
+SELECT 
+    cast_name,
+    COUNT(DISTINCT show_id) as total_titles,
+    COUNT(DISTINCT CASE WHEN type = 'Movie' THEN show_id END) as movies,
+    COUNT(DISTINCT CASE WHEN type = 'TV Show' THEN show_id END) as tv_shows
+FROM workspace.netflix.netflix_content_by_cast_gold
+GROUP BY cast_name
+ORDER BY total_titles DESC
+LIMIT 10
+```
+
+### ตัวอย่างที่ 8: ชั้น Gold - แนวโน้มเนื้อหารายปี
+
+```sql
+-- เมตริกที่รวมกลุ่มไว้ล่วงหน้า - ผลลัพธ์ทันที!
+SELECT 
+    release_year,
+    SUM(CASE WHEN type = 'Movie' THEN total_title ELSE 0 END) as movies,
+    SUM(CASE WHEN type = 'TV Show' THEN total_title ELSE 0 END) as tv_shows,
+    SUM(total_title) as total_content
+FROM workspace.netflix.netflix_yearly_content_trends_gold
+WHERE release_year >= 2015
+GROUP BY release_year
+ORDER BY release_year DESC
+```
+
+### ตัวอย่างที่ 9: ชั้น Gold - เครือข่ายความร่วมมือของนักแสดง
+
+```sql
+-- ค้นหานักแสดงที่มักร่วมงานด้วยกัน
+SELECT 
+    a.cast_name as actor1,
+    b.cast_name as actor2,
+    COUNT(DISTINCT a.show_id) as collaborations
+FROM workspace.netflix.netflix_content_by_cast_gold a
+JOIN workspace.netflix.netflix_content_by_cast_gold b
+    ON a.show_id = b.show_id 
+    AND a.cast_id < b.cast_id  -- หลีกเลี่ยงข้อมูลซ้ำ
+GROUP BY actor1, actor2
+HAVING COUNT(DISTINCT a.show_id) >= 3
+ORDER BY collaborations DESC
+LIMIT 20
+```
+
+### ตัวอย่างที่ 10: ชั้น Gold - แนวโน้มอัตราส่วนภาพยนตร์ต่อซีรีส์
+
+```sql
+-- วิเคราะห์การเปลี่ยนแปลงกลยุทธ์เนื้อหาตามเวลา
+SELECT 
+    release_year,
+    MAX(CASE WHEN type = 'Movie' THEN total_title END) as movie_count,
+    MAX(CASE WHEN type = 'TV Show' THEN total_title END) as tv_count,
+    ROUND(
+        MAX(CASE WHEN type = 'Movie' THEN total_title END) * 100.0 / 
+        NULLIF(MAX(CASE WHEN type = 'TV Show' THEN total_title END), 0),
+        2
+    ) as movie_to_tv_ratio_pct
+FROM workspace.netflix.netflix_yearly_content_trends_gold
+WHERE release_year >= 2010
+GROUP BY release_year
+ORDER BY release_year DESC
 ```
 
 ---
