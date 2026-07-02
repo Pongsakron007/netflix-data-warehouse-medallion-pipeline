@@ -141,7 +141,9 @@ Netflix_project/
     ├── workspace.netflix.bridge_title_director_silver
     ├── workspace.netflix.bridge_title_country_silver
     ├── workspace.netflix.bridge_title_category_silver
-    └── workspace.netflix.netflix_bronze_bad_record # บันทึกตรวจสอบข้อมูลไม่ถูกต้อง
+    ├── workspace.netflix.netflix_bronze_bad_record # บันทึกตรวจสอบข้อมูลไม่ถูกต้อง
+    ├── workspace.netflix.netflix_content_by_cast_gold # Cast แบบ Denormalized (Gold)
+    └── workspace.netflix.netflix_yearly_content_trends_gold # แนวโน้มรายปี (Gold)
 ```
 
 ---

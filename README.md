@@ -126,14 +126,17 @@ Netflix_project/
 ├── framework.ipynb                      # Main pipeline implementation
 │   ├── BronzeLayer class                # Bronze ingestion logic
 │   ├── SilverLayer class                # Silver transformation logic
+│   ├── GoldLayer class                  # Gold aggregation logic
 │   ├── Bronze documentation (markdown)   # Step-by-step Bronze guide
-│   └── Silver documentation (markdown)   # Step-by-step Silver guide
+│   ├── Silver documentation (markdown)   # Step-by-step Silver guide
+│   └── Gold documentation (markdown)     # Step-by-step Gold guide
 │
 ├── silver_layer_tests.py                # Comprehensive test suite
 │   ├── SilverLayerTests class           # 5 automated test methods
 │   └── StarSchemaQueries class          # SQL analytics helpers
 │
-├── README.md                            # This file
+├── README.md                            # This file (English)
+├── README_TH.md                         # Thai version
 │
 └── Data Tables:
     ├── workspace.netflix.config_table              # Pipeline configuration
