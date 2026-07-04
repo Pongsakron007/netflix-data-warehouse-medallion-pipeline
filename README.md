@@ -56,9 +56,9 @@ This project implements a **scalable, production-ready data pipeline** for proce
 ### Medallion Architecture Pattern
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         DATA FLOW PIPELINE                          │
-└─────────────────────────────────────────────────────────────────────┘
+               ┌─────────────────────────────────────────────────────────────────────┐
+               │                         DATA FLOW PIPELINE                          │
+               └─────────────────────────────────────────────────────────────────────┘
 
   📁 Source Files                🥉 Bronze Layer            🥈 Silver Layer               🥇 Gold Layer
   ─────────────                 ───────────────              ───────────────                ─────────────
