@@ -60,20 +60,20 @@ This project implements a **scalable, production-ready data pipeline** for proce
 │                         DATA FLOW PIPELINE                          │
 └─────────────────────────────────────────────────────────────────────┘
 
-  📁 Source Files                🥉 Bronze Layer              🥈 Silver Layer                   🥇 Gold Layer
-  ─────────────                 ───────────────              ───────────────                  ─────────────
+  📁 Source Files                🥉 Bronze Layer            🥈 Silver Layer               🥇 Gold Layer
+  ─────────────                 ───────────────              ───────────────                ─────────────
        CSV                            │                            │                              │
-       JSON          ──────►    Raw Data Store      ──────►   Star Schema        ──────►    Aggregations
+       JSON          ──────►    Raw Data Store      ──────►   Star Schema        ──────►     Aggregations
       Parquet                   + Metadata                   + Quality Checks                 + Analytics
-                                 + CDF Enabled                + SCD Type 2                    + Metrics
-                                                              + Normalization
+                                + CDF Enabled                + SCD Type 2                     + Metrics
+                                                             + Normalization
 
   ┌────────────┐              ┌────────────┐              ┌────────────────┐              ┌────────────┐
-  │ netflix.csv│              │  netflix   │              │   dim_titles   │              │  Dashboards│
+  │ netflix.csv│              │  netflix   │              │   dim_titles   │              │ Dashboards │
   │            │  ─────────►  │   _bronze  │  ─────────►  │ + 4 sub-dims   │  ─────────►  │    KPIs    │
   │ (17K rows) │              │            │              │ + 4 bridges    │              │  Reports   │
   └────────────┘              └────────────┘              │ + bad_records  │              └────────────┘
-                                    ▲                      └────────────────┘
+                                    ▲                     └────────────────┘
                                     │
                               config_table
                            (pipeline settings)
