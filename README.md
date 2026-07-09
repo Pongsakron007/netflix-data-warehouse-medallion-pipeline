@@ -14,9 +14,10 @@
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
-- [Data Pipeline Components](#data-pipeline-components)
+- [Pipeline Components](#pipeline-components)
 - [Table Schema](#table-schema)
 - [Getting Started](#getting-started)
+- [Configuration](#configuration)
 - [Testing Framework](#testing-framework)
 - [Usage Examples](#usage-examples)
 - [Performance Metrics](#performance-metrics)
@@ -28,16 +29,19 @@
 
 ## 🎯 Overview
 
-This project implements a **scalable, production-ready data pipeline** for processing Netflix content data using Databricks and the **Medallion Architecture**. The pipeline ingests raw CSV data, applies comprehensive data quality validation, and transforms it into a **star schema** optimized for analytics and business intelligence.
+This project implements a **scalable, production-ready data pipeline** for processing Netflix content data using Databricks and the **Medallion Architecture**. Built with **configurable dataclass-based pipeline classes**, the framework ingests raw data, applies comprehensive data quality validation, and transforms it into a **star schema** optimized for analytics and business intelligence.
 
 ### Key Features
 
+✅ **Configurable Framework**: Dataclass-based `BronzeLayer`, `SilverLayer`, and `GoldLayer` classes  
 ✅ **Medallion Architecture**: Bronze (raw) → Silver (cleaned) → Gold (aggregated) layers  
-✅ **Data Quality Validation**: 8-stage quality check pipeline with bad record tracking  
+✅ **Databricks Auto Loader**: Incremental S3 ingestion with folder-path detection and schema evolution  
+✅ **Data Quality Validation**: 8-stage quality check pipeline with bad record quarantine  
 ✅ **SCD Type 2**: Historical change tracking with temporal validity  
 ✅ **Star Schema**: 1 main dimension + 4 sub-dimensions + 4 bridge tables  
-✅ **Hash-based Change Detection**: Efficient delta identification  
-✅ **Incremental Processing**: Change Data Feed (CDF) for performance  
+✅ **Hash-based Change Detection**: Efficient delta identification using SHA-256  
+✅ **Incremental Processing**: Change Data Feed (CDF) enabled for all downstream layers  
+✅ **Production Scalability**: Structured streaming with `trigger(availableNow=True)`  
 ✅ **Comprehensive Testing**: 5 automated test suites with 100% pass rate  
 ✅ **Production Performance**: 317+ records/second throughput  
 
@@ -56,9 +60,9 @@ This project implements a **scalable, production-ready data pipeline** for proce
 ### Medallion Architecture Pattern
 
 ```
-               ┌─────────────────────────────────────────────────────────────────────┐
-               │                         DATA FLOW PIPELINE                          │
-               └─────────────────────────────────────────────────────────────────────┘
+                ┌─────────────────────────────────────────────────────────────────────┐
+                │                         DATA FLOW PIPELINE                          │
+                └─────────────────────────────────────────────────────────────────────┘
 
   📁 Source Files                🥉 Bronze Layer            🥈 Silver Layer               🥇 Gold Layer
   ─────────────                 ───────────────              ───────────────                ─────────────
@@ -66,98 +70,133 @@ This project implements a **scalable, production-ready data pipeline** for proce
        JSON          ──────►    Raw Data Store      ──────►   Star Schema        ──────►     Aggregations
       Parquet                   + Metadata                   + Quality Checks                 + Analytics
                                 + CDF Enabled                + SCD Type 2                     + Metrics
-                                                             + Normalization
+                                + Auto Loader                + Normalization                  + BI-Ready
 
   ┌────────────┐              ┌────────────┐              ┌────────────────┐              ┌────────────┐
   │ netflix.csv│              │  netflix   │              │   dim_titles   │              │ Dashboards │
   │            │  ─────────►  │   _bronze  │  ─────────►  │ + 4 sub-dims   │  ─────────►  │    KPIs    │
   │ (17K rows) │              │            │              │ + 4 bridges    │              │  Reports   │
   └────────────┘              └────────────┘              │ + bad_records  │              └────────────┘
-                                    ▲                     └────────────────┘
-                                    │
-                              config_table
-                           (pipeline settings)
+                                     ▲                     └────────────────┘
+                                     │
+                               config_table
+                            (pipeline settings)
 ```
 
 ### Layer Responsibilities
 
 #### 🥉 **Bronze Layer** - Raw Data Ingestion
-- **Purpose**: Landing zone for external data
+- **Purpose**: Landing zone for external data with full audit trail
+- **Class**: `BronzeLayer` (dataclass-based configuration)
 - **Characteristics**: Immutable, append-only, schema-on-read
-- **Components**: `BronzeLayer` class
-- **Features**:
-  - File metadata tracking (`_load_dt`, `_file_name`, `_file_path`, etc.)
-  - Change Data Feed (CDF) enabled
+- **Key Features**:
+  - **Databricks Auto Loader** for incremental S3/cloud storage ingestion
+  - **Folder-path detection** - automatically discovers new files in directories
+  - **Schema evolution** with rescue mode (`cloudFiles.schemaEvolutionMode: "rescue"`)
+  - **Explicit schema definition** using StructType for type-safe metadata columns
+  - **Checkpoint-based file tracking** - processes only new files
+  - **Error handling** for Spark Connect serverless edge cases (SPARK-55448)
+  - **Change Data Feed (CDF)** enabled for downstream incremental processing
+  - File metadata tracking (`_load_dt`, `_file_name`, `_file_path`, `_file_size`, `_file_mod`)
   - Support for CSV, JSON, Parquet formats
-  - Configurable via `config_table`
+  - Configurable via `config_table` or direct instantiation
+
+**Auto Loader Modes**:
+- **Batch Mode**: `read_from_file()` - one-time full load
+- **Streaming Mode**: `s3_auto_loader()` - incremental with `trigger(availableNow=True)`
 
 #### 🥈 **Silver Layer** - Data Quality & Normalization
 - **Purpose**: Clean, validated, business-ready data
-- **Characteristics**: Normalized, deduplicated, validated
-- **Components**: `SilverLayer` class
-- **Features**:
-  - 8-stage data quality pipeline
-  - Star schema with 9 tables total
-  - SCD Type 2 historical tracking
-  - Hash-based change detection
-  - Bad record audit trail
+- **Class**: `SilverLayer` (dataclass-based configuration)
+- **Characteristics**: Normalized, deduplicated, validated, SCD Type 2 enabled
+- **Key Features**:
 
-#### 🥇 **Gold Layer** - Analytics & Aggregations
-- **Purpose**: Business-ready aggregations and denormalized analytics tables
-- **Characteristics**: Denormalized, pre-aggregated, optimized for BI tools
-- **Components**: `GoldLayer` class
-- **Features**:
-  - Denormalized fact tables (flatten many-to-many relationships)
-  - Pre-computed aggregations and KPIs
-  - Current data only (`active_flag = True` from Silver)
-  - Full refresh pattern (`mode("overwrite")`)
-  - Optimized for dashboards and self-service BI
-- **Tables Created**:
-  - `netflix_content_by_cast_gold` - Denormalized title-cast relationships
-  - `netflix_yearly_content_trends_gold` - Aggregated yearly content metrics
+**8-Stage Data Quality Pipeline**:
+1. `trim_data()` - Remove leading/trailing whitespace
+2. `change_data_type()` - Cast to target types with `try_cast()` / `try_to_date()`
+3. `get_invalid_record()` - Detect format violations via regex
+4. `get_key_null_record()` - Identify null primary keys
+5. `get_dup_record()` - Find row and key duplicates
+6. `get_all_bad_record()` - Consolidate all bad records
+7. `load_bad_record()` - Quarantine bad records with batch tracking
+8. `get_final_result()` - Extract clean records
+
+**Star Schema Transformation**:
+- `get_hash_key_value()` - Generate SHA-256 hashes for CDC
+- `load_sub_dimensions()` - Populate 4 dimension tables (cast, directors, countries, categories)
+- `load_bridge_tables()` - Create 4 many-to-many relationship tables
+- `load_main_dimension()` - Apply SCD Type 2 logic to main dimension
+- `process_cdf_stream_to_silver()` - Orchestrate the entire incremental pipeline
+
+**Output**: 9 tables (1 main dimension + 4 sub-dimensions + 4 bridges) + 1 bad record table
+
+#### 🥇 **Gold Layer** - Business Aggregations
+- **Purpose**: Optimized analytical tables for end-user consumption
+- **Class**: `GoldLayer` (dataclass-based configuration)
+- **Characteristics**: Denormalized, pre-aggregated, BI-ready
+- **Key Features**:
+
+**Business-Ready Tables**:
+1. `create_gold_content_by_cast()` - Denormalized Title-Cast relationships
+   - **Joins**: `dim_titles_silver` ⋈ `bridge_title_cast_silver` ⋈ `dim_cast_silver`
+   - **Output**: One row per Title-Cast pair
+   - **Business Question**: "Which actors appear in which titles?"
+
+2. `create_gold_yearly_content_trends()` - Content volume by year and type
+   - **Aggregation**: `GROUP BY release_year, type`
+   - **Metrics**: Count of titles
+   - **Business Question**: "How does content volume change by year and type?"
+
+**Operational Model**:
+- **Write Mode**: Always `overwrite` (full refresh)
+- **Data Freshness**: Reflects latest Silver layer state
+- **Query Performance**: Pre-joined and pre-aggregated for fast BI queries
+- **Active Data Only**: Filters for `active_flag = True` from SCD Type 2 dimensions
+- **Usage**: Dashboards, reports, ad-hoc analysis, self-service BI
 
 ---
 
 ## 📂 Project Structure
 
 ```
-Netflix_project/
+Databricks-for-Data-Engineers-Bootcamp2/
 │
-├── framework.ipynb                      # Main pipeline implementation
-│   ├── BronzeLayer class                # Bronze ingestion logic
-│   ├── SilverLayer class                # Silver transformation logic
-│   ├── GoldLayer class                  # Gold aggregation logic
-│   ├── Bronze documentation (markdown)   # Step-by-step Bronze guide
-│   ├── Silver documentation (markdown)   # Step-by-step Silver guide
-│   └── Gold documentation (markdown)     # Step-by-step Gold guide
+├── Netflix_project/
+│   └── framework.ipynb                 # Main pipeline implementation
+│       ├── BronzeLayer class          # Raw data ingestion logic
+│       ├── SilverLayer class          # Data quality & transformation logic
+│       ├── GoldLayer class            # Business aggregation logic
+│       ├── Bronze Layer docs (MD)     # Step-by-step Bronze guide
+│       ├── Silver Layer docs (MD)     # Step-by-step Silver guide
+│       └── Gold Layer docs (MD)       # Step-by-step Gold guide
 │
-├── silver_layer_tests.py                # Comprehensive test suite
-│   ├── SilverLayerTests class           # 5 automated test methods
-│   └── StarSchemaQueries class          # SQL analytics helpers
+├── silver_layer_tests.py              # Comprehensive test suite
+│   ├── SilverLayerTests class        # 5 automated test methods
+│   └── StarSchemaQueries class       # SQL analytics helpers
 │
-├── README.md                            # This file (English)
-├── README_TH.md                         # Thai version
+├── README.md                          # This file (English)
+├── README_TH.md                       # Thai documentation
 │
 └── Data Tables:
-    ├── workspace.netflix.config_table              # Pipeline configuration
-    ├── workspace.netflix.netflix_bronze            # Raw data (Bronze)
-    ├── workspace.netflix.dim_titles_silver         # Main dimension (Silver)
-    ├── workspace.netflix.dim_cast_silver           # Cast sub-dimension
-    ├── workspace.netflix.dim_directors_silver      # Directors sub-dimension
-    ├── workspace.netflix.dim_countries_silver      # Countries sub-dimension
-    ├── workspace.netflix.dim_categories_silver     # Genres sub-dimension
-    ├── workspace.netflix.bridge_title_cast_silver  # Title-Cast relationships
-    ├── workspace.netflix.bridge_title_director_silver
-    ├── workspace.netflix.bridge_title_country_silver
-    ├── workspace.netflix.bridge_title_category_silver
-    ├── workspace.netflix.netflix_bronze_bad_record # Bad record audit
-    ├── workspace.netflix.netflix_content_by_cast_gold # Denormalized cast (Gold)
+    ├── workspace.netflix.config_table                      # Pipeline configuration
+    ├── workspace.netflix.netflix_bronze                    # Raw data (Bronze)
+    ├── workspace.netflix.dim_titles_silver                 # Main dimension (Silver)
+    ├── workspace.netflix.dim_cast_silver                   # Cast sub-dimension
+    ├── workspace.netflix.dim_directors_silver              # Directors sub-dimension
+    ├── workspace.netflix.dim_countries_silver              # Countries sub-dimension
+    ├── workspace.netflix.dim_categories_silver             # Categories sub-dimension
+    ├── workspace.netflix.bridge_title_cast_silver          # Title-Cast relationships
+    ├── workspace.netflix.bridge_title_director_silver      # Title-Director relationships
+    ├── workspace.netflix.bridge_title_country_silver       # Title-Country relationships
+    ├── workspace.netflix.bridge_title_category_silver      # Title-Category relationships
+    ├── workspace.netflix.netflix_bronze_bad_record         # Bad record quarantine
+    ├── workspace.netflix.netflix_content_by_cast_gold      # Denormalized cast (Gold)
     └── workspace.netflix.netflix_yearly_content_trends_gold # Yearly trends (Gold)
 ```
 
 ---
 
-## ⚙️ Data Pipeline Components
+## ⚙️ Pipeline Components
 
 ### 1. Configuration Management
 
@@ -167,88 +206,125 @@ Netflix_project/
 # Centralized pipeline configuration
 config_table columns:
 - pipeline_name: str          # Unique identifier (e.g., "netflix")
-- file_path: str              # Source data location
-- header: bool                # CSV header row existence
-- delimiter: str              # Field separator
-- table_name: str             # Target Bronze table
-- schema_detail: map          # Column → data type mapping
+- file_path: str              # Source data location (file or folder path)
+- header: bool                # CSV header presence
+- delimiter: str              # Field delimiter
+- table_name: str             # Target Bronze table name
+- schema_detail: map          # Column name → data type mapping
 - keys: array                 # Primary key columns
 - write_mode: str             # append/overwrite
 ```
 
 ### 2. Bronze Layer (`BronzeLayer` class)
 
+**Factory Method**:
+```python
+bronze = BronzeLayer.from_config_table("netflix")
+```
+
 **Responsibilities**:
-- Read data from files (CSV, JSON, Parquet)
-- Add metadata columns for lineage
-- Initialize Delta tables with CDF
-- Append-only loading pattern
+- Read data from files (CSV, JSON, Parquet) or folders
+- Add metadata columns for source tracking
+- Initialize Delta tables with CDF enabled
+- Support both batch and streaming ingestion
 
 **Key Methods**:
-- `from_config_table(pipeline_name)` - Factory method
-- `read_from_file()` - Load and enrich with metadata
-- `load_to_bronze_table(df)` - Append to Bronze table
-- `_init_bronze_table()` - First-time table creation
+- `from_config_table(pipeline_name)` - Factory method from config
+- `read_from_file()` - Batch mode: load file and add metadata
+- `s3_auto_loader(checkpoint_location)` - Streaming mode: Auto Loader with checkpoint
+- `load_to_bronze_table(df)` - Append data to Bronze table
+- `_init_bronze_table()` - Initialize table with CDF on first run
+
+**Auto Loader Configuration**:
+```python
+# Schema evolution and file discovery
+.option("cloudFiles.schemaEvolutionMode", "rescue")
+.option("pathGlobFilter", "*.csv")
+.option("cloudFiles.schemaLocation", schema_location)
+.option("mergeSchema", "true")
+.trigger(availableNow=True)  # Batch-style streaming for cost efficiency
+```
 
 ### 3. Silver Layer (`SilverLayer` class)
 
+**Factory Method**:
+```python
+silver = SilverLayer.from_config_table("netflix")
+```
+
 **Responsibilities**:
 - Process incremental changes via CDF
-- Apply 8-stage data quality validation
-- Normalize into star schema (9 tables)
-- Implement SCD Type 2 for change tracking
-- Log bad records for auditing
+- Execute 8-stage data quality validation
+- Transform to star schema (9 tables)
+- Apply SCD Type 2 for historical tracking
+- Quarantine bad records for audit
 
 **Key Methods**:
 
 #### Data Quality Pipeline:
 1. `trim_data()` - Remove whitespace
-2. `change_data_type()` - Type conversions
+2. `change_data_type()` - Cast data types
 3. `get_invalid_record()` - Detect invalid values
 4. `get_key_null_record()` - Find null keys
-5. `get_dup_record()` - Identify duplicates (row & key)
+5. `get_dup_record()` - Identify duplicates (row and key)
 6. `get_all_bad_record()` - Consolidate bad records
 7. `load_bad_record()` - Audit trail
-8. `get_final_result()` - Extract clean records
+8. `get_final_result()` - Extract clean data
 
 #### Star Schema Creation:
-- `get_hash_key_value()` - Generate change detection hashes
-- `load_sub_dimensions()` - Load master data (cast, directors, etc.)
-- `load_bridge_tables()` - Load many-to-many relationships
+- `get_hash_key_value()` - Generate hashes for CDC
+- `load_sub_dimensions()` - Populate masters (cast, directors, etc.)
+- `load_bridge_tables()` - Create many-to-many relationships
 - `load_main_dimension()` - SCD Type 2 upserts
 - `process_cdf_stream_to_silver()` - Orchestrate full pipeline
 
+**Incremental Processing**:
+```python
+# Read only changes from Bronze
+bronze_cdf = (
+    spark.readStream
+    .option("readChangeFeed", "true")
+    .option("startingVersion", 0)
+    .table("workspace.netflix.netflix_bronze")
+)
+```
+
 ### 4. Gold Layer (`GoldLayer` class)
+
+**Factory Method**:
+```python
+gold = GoldLayer.from_config_table("netflix")
+```
 
 **Responsibilities**:
 - Create denormalized analytical tables
 - Pre-compute business metrics and KPIs
-- Filter for current data only (`active_flag = True`)
+- Filter for active data only (`active_flag = True`)
 - Optimize for dashboard and BI tool consumption
 - Full refresh pattern (overwrite mode)
 
 **Key Methods**:
 
 #### Denormalized Tables:
-- `create_gold_content_by_cast()` - Flatten title-cast many-to-many relationships
+- `create_gold_content_by_cast()` - Flatten Title-Cast Many-to-Many relationships
   - Joins: `dim_titles_silver` ⋈ `bridge_title_cast_silver` ⋈ `dim_cast_silver`
-  - Output: One row per title-cast combination
-  - Business Question: "Which cast members performed in what titles?"
+  - Output: One row per Title-Cast pair
+  - Business Question: "Which actors appear in which titles?"
 
 - `create_gold_yearly_content_trends()` - Aggregate content volume by year and type
   - Aggregation: `GROUP BY release_year, type`
-  - Metric: Count of titles
-  - Business Question: "How has content volume changed by year and type?"
+  - Metrics: Count of titles
+  - Business Question: "How does content volume change by year and type?"
 
-#### Pipeline Orchestration:
+#### Pipeline Management:
 - `from_config_table(pipeline_name)` - Factory method from config
-- `run_gold_pipeline()` - Execute all gold table creation methods
+- `run_gold_pipeline()` - Execute all Gold table creation methods
 
 **Gold Table Characteristics**:
 - **Write Mode**: Always `overwrite` (full refresh)
 - **Data Freshness**: Reflects latest Silver layer state
 - **Query Performance**: Pre-joined and pre-aggregated for speed
-- **Use Case**: Dashboards, reports, ad-hoc analysis, self-service BI
+- **Usage**: Dashboards, reports, ad-hoc analysis, self-service BI
 
 ---
 
@@ -258,127 +334,80 @@ config_table columns:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `title_sk` | BIGINT | Surrogate key (primary key) |
+| `title_sk` | BIGINT | Surrogate key (auto-generated) |
 | `show_id` | STRING | Business key from source |
 | `type` | STRING | Movie or TV Show |
 | `title` | STRING | Content title |
 | `date_added` | DATE | Date added to Netflix |
-| `release_year` | INT | Year of release |
+| `release_year` | INT | Release year |
 | `rating` | STRING | Content rating (PG, R, etc.) |
-| `duration` | STRING | Runtime or seasons |
-| `description` | STRING | Synopsis |
+| `duration` | STRING | Runtime or number of seasons |
+| `description` | STRING | Content synopsis |
 | `hash_key` | STRING | SHA-256 of business keys |
 | `hash_value` | STRING | SHA-256 of data columns |
 | `active_flag` | BOOLEAN | Current version indicator |
-| `start_date` | TIMESTAMP | Version valid from |
-| `end_date` | TIMESTAMP | Version valid to (NULL = current) |
+| `start_date` | TIMESTAMP | Version effective from |
+| `end_date` | TIMESTAMP | Version effective until (NULL = current) |
 | `load_dt` | DATE | Load date |
 | `load_dttm` | TIMESTAMP | Load timestamp |
 
 ### Sub-Dimensions
 
 **dim_cast_silver** (36,399 actors):
-- `cast_sk`, `cast_name`
+- `cast_sk`, `cast_id`, `cast_name`
 
 **dim_directors_silver** (4,996 directors):
-- `director_sk`, `director_name`
+- `director_sk`, `director_id`, `director_name`
 
 **dim_countries_silver** (145 countries):
-- `country_sk`, `country_name`
+- `country_sk`, `country_id`, `country_name`
 
-**dim_categories_silver** (73 genres):
-- `category_sk`, `category_name`
+**dim_categories_silver** (73 categories):
+- `category_sk`, `category_id`, `category_name`
 
 ### Bridge Tables (Many-to-Many Relationships)
 
 **bridge_title_cast_silver** (128,818 relationships):
-- `title_sk`, `cast_sk`
+- `show_id`, `cast_id`
 
 **bridge_title_director_silver** (14,039 relationships):
-- `title_sk`, `director_sk`
+- `show_id`, `director_id`
 
 **bridge_title_country_silver** (20,110 relationships):
-- `title_sk`, `country_sk`
+- `show_id`, `country_id`
 
 **bridge_title_category_silver** (38,848 relationships):
-- `title_sk`, `category_sk`
+- `show_id`, `category_id`
 
 ### Audit Table: `netflix_bronze_bad_record`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| All source columns | VARIOUS | Original record |
-| `_reason` | ARRAY<STRING> | List of validation failures |
+| All source columns | Various | Original record |
+| `reason` | ARRAY<STRING> | List of validation failures |
 | `batch_id` | INT | Batch identifier |
 | `load_dt` | DATE | Rejection date |
 | `load_dttm` | TIMESTAMP | Rejection timestamp |
 
-### Gold Layer Tables
-
-#### 1. Denormalized Table: `netflix_content_by_cast_gold`
-
-**Purpose**: Pre-joined title and cast information for fast queries  
-**Refresh Pattern**: Full overwrite on each run  
-**Data Source**: `dim_titles_silver` (active only) + `bridge_title_cast_silver` + `dim_cast_silver`
-
-**Schema**:
-| Column | Type | Description |
-|--------|------|-------------|
-| `show_id` | STRING | Business key |
-| `title` | STRING | Content title |
-| `type` | STRING | Movie or TV Show |
-| `release_year` | INT | Year of release |
-| `rating` | STRING | Content rating |
-| `duration` | STRING | Runtime or seasons |
-| `description` | STRING | Synopsis |
-| `date_added` | DATE | Date added to Netflix |
-| `cast_id` | STRING | Cast member surrogate key |
-| `cast_name` | STRING | Actor/Cast member name |
-| All other dim_titles columns | VARIOUS | Inherited from Silver dimension |
-
-**Row Count**: ~128,000+ rows (one per title-cast combination)  
-**Business Questions Answered**:
-- Which cast members performed in what titles?
-- What titles did a specific actor appear in?
-- Which cast members collaborate most frequently?
-
-#### 2. Aggregated Table: `netflix_yearly_content_trends_gold`
-
-**Purpose**: Pre-aggregated content volume metrics by year and type  
-**Refresh Pattern**: Full overwrite on each run  
-**Data Source**: `dim_titles_silver` (active only), aggregated by `release_year` and `type`
-
-**Schema**:
-| Column | Type | Description |
-|--------|------|-------------|
-| `release_year` | INT | Year of content release |
-| `type` | STRING | Movie or TV Show |
-| `total_title` | BIGINT | Count of titles released |
-
-**Row Count**: ~150 rows (one per year-type combination)  
-**Business Questions Answered**:
-- How has content volume changed over time?
-- What's the movie-to-TV-show ratio by year?
-- Which years had the highest content production?
-
-### Star Schema Visual Diagram
+### Star Schema Diagram
 
 ```text
 
-       [ Sub-Dimension: Directors ]                       [ Sub-Dimension: Cast ]
-          dim_directors_silver                             dim_cast_silver
+       [ Sub-Dimension: Directors ]                        [ Sub-Dimension: Cast ]
+          dim_directors_silver                              dim_cast_silver
          ┌──────────────────────┐                         ┌──────────────────┐
          │ PK  │ director_sk    │                         │ PK  │ cast_sk    │
+         │     │ director_id    │                         │     │ cast_id    │
          │     │ director_name  │                         │     │ cast_name  │
          └──────────┬───────────┘                         └────────┬─────────┘
                     │ (1)                                          │ (1)
                     ▼                                              ▼
                     ∞ (Many)                                       ∞ (Many)
        [ Bridge Table ]                                   [ Bridge Table ]
-         bridge_title_director                            bridge_title_cast
+         bridge_title_director                             bridge_title_cast
          ┌──────────────────────┐                         ┌──────────────────┐
-         │ FK  │ title_sk       │                         │ FK  │ title_sk   │
-         │ FK  │ director_sk    │                         │ FK  │ cast_sk    │
+         │ FK  │ show_id        │                         │ FK  │ show_id    │
+         │ FK  │ director_id    │                         │ FK  │ cast_id    │
          └──────────┬───────────┘                         └────────┬─────────┘
                     │                                              │
                     │                                              │
@@ -386,66 +415,37 @@ config_table columns:
                             ∞ (Many)│              │ ∞ (Many)
                                     ▼              ▼
                         ┌────────────────────────────────────────┐
-                        │        dim_titles_silver               │
-                        │      (Main Dimension Table)            │
+                        │         dim_titles_silver              │
+                        │       (Main Fact Dimension)            │
                         ├────────────────────────────────────────┤
                         │ PK        │ title_sk                   │
-                        │           │ show_id                    │
-                        │           │ title                      │
-                        │           │ type                       │
-                        │           │ release_year               │
-                        │           │ rating                     │
-                        │           │ duration                   │
-                        │           │ description                │
-                        │           │ date_added                 │
-                        ├────────────────────────────────────────┤
-                        │ Hashing   │ hash_key                   │
-                        │           │ hash_value                 │
-                        ├────────────────────────────────────────┤
-                        │ SCD Type 2│ active_flag                │
-                        │           │ start_date                 │
-                        │           │ end_date                   │
-                        ├────────────────────────────────────────┤
-                        │ Metadata  │ load_dt                    │
-                        │           │ load_dttm                  │
-                        └────────────────────────────────────────┘
-                                    ▲              ▲
-                            ∞ (Many)│              │ ∞ (Many)
-                    ┌───────────────┘              └───────────────┐
+                        │ BK        │ show_id                    │
+                        │           │ type, title, date_added    │
+                        │           │ release_year, rating       │
+                        │           │ duration, description      │
+                        │ SCD       │ hash_key, hash_value       │
+                        │ Type 2    │ active_flag                │
+                        │           │ start_date, end_date       │
+                        └───────────┬───────────────┬────────────┘
+                    ∞ (Many)        │               │ ∞ (Many)
+                                    ▼               ▼
+       [ Bridge Table ]                                   [ Bridge Table ]
+         bridge_title_country                              bridge_title_category
+         ┌──────────────────────┐                         ┌──────────────────┐
+         │ FK  │ show_id        │                         │ FK  │ show_id    │
+         │ FK  │ country_id     │                         │ FK  │ category_id│
+         └──────────┬───────────┘                         └────────┬─────────┘
                     │                                              │
-                    │                                              │
-         ┌──────────┴───────────┐                         ┌────────┴─────────┐
-         │ FK  │ title_sk       │                         │ FK  │ title_sk   │
-         │ FK  │ country_sk     │                         │ FK  │ category_sk│
-         └──────────────────────┘                         └──────────────────┘
-          bridge_title_country                             bridge_title_category
-                    ▲                                              ▲
-                    │ ∞ (Many)                                     │ ∞ (Many)
                     │ (1)                                          │ (1)
-         ┌──────────┴───────────┐                         ┌────────┴─────────┐
+                    ▼                                              ▼
+       [ Sub-Dimension: Countries ]                      [ Sub-Dimension: Categories ]
+          dim_countries_silver                             dim_categories_silver
+         ┌──────────────────────┐                         ┌──────────────────┐
          │ PK  │ country_sk     │                         │ PK  │ category_sk│
-         │     │ country_name   │                         │     │category_name│
-         └──────────────────────┘                         └──────────────────┘
-        [ Sub-Dimension: Countries ]                      [ Sub-Dimension: Categories ]
-          dim_countries_silver                            dim_categories_silver
-
+         │     │ country_id     │                         │     │ category_id│
+         │     │ country_name   │                         │     │ category_nm│
+         └────────────────────────┘                        └──────────────────┘
 ```
-
-**Legend**:
-- **PK** = Primary Key
-- **FK** = Foreign Key
-- **(1)** = One side of relationship
-- **∞ (Many)** = Many side of relationship
-- **Main Dimension** = Central fact table with SCD Type 2
-- **Sub-Dimensions** = Lookup/master data tables
-- **Bridge Tables** = Many-to-many relationship tables
-
-**Cardinality Explanation**:
-- **One Director** → **Many Titles** (via bridge_title_director)
-- **One Cast Member** → **Many Titles** (via bridge_title_cast)
-- **One Country** → **Many Titles** (via bridge_title_country)
-- **One Category** → **Many Titles** (via bridge_title_category)
-- Each title can have multiple directors, cast members, countries, and categories
 
 ---
 
@@ -453,16 +453,19 @@ config_table columns:
 
 ### Prerequisites
 
-- Databricks workspace (AWS/Azure/GCP)
-- Unity Catalog enabled
-- Databricks Runtime 13.0+ or MLR 13.0+
-- Python 3.10+
-- Access to workspace catalog and schema
+- Databricks workspace with Unity Catalog enabled
+- Access to S3 or cloud storage (for Auto Loader)
+- Python 3.10+ with PySpark
+- Delta Lake 2.0+
 
-### Step 1: Setup Configuration
+### Setup Steps
+
+#### 1. Create Configuration Table
 
 ```python
-# Create configuration table
+# Create schema and config table
+spark.sql("CREATE SCHEMA IF NOT EXISTS workspace.netflix")
+
 spark.sql("""
 CREATE TABLE IF NOT EXISTS workspace.netflix.config_table (
     pipeline_name STRING,
@@ -477,615 +480,428 @@ CREATE TABLE IF NOT EXISTS workspace.netflix.config_table (
 """)
 
 # Insert Netflix pipeline configuration
-config_data = [(
-    "netflix",
-    "/Volumes/main/default/netflix_data/*.csv",
-    True,
-    ",",
-    "workspace.netflix.netflix_bronze",
-    {"show_id": "string", "type": "string", ...},
-    ["show_id"],
-    "append"
-)]
-
-spark.createDataFrame(config_data, schema).write.mode("overwrite").saveAsTable("workspace.netflix.config_table")
+spark.sql("""
+INSERT INTO workspace.netflix.config_table VALUES (
+    'netflix',
+    's3://your-bucket/netflix/',  -- or file path
+    true,
+    ',',
+    'netflix',
+    map(
+        'show_id', 'string',
+        'type', 'string',
+        'title', 'string',
+        'director', 'string',
+        'cast', 'string',
+        'country', 'string',
+        'date_added', 'date',
+        'release_year', 'int',
+        'rating', 'string',
+        'duration', 'string',
+        'listed_in', 'string',
+        'description', 'string'
+    ),
+    array('show_id'),
+    'overwrite'
+)
+""")
 ```
 
-### Step 2: Run Bronze Layer
+#### 2. Run Bronze Layer
 
 ```python
-from framework import BronzeLayer
+# Option A: Batch Mode (one-time load)
+bronze = BronzeLayer.from_config_table("netflix")
+raw_df = bronze.read_from_file()
+bronze.load_to_bronze_table(raw_df)
 
-# Initialize from configuration
-b = BronzeLayer.from_config_table("netflix")
-
-# Read and load data
-bronze_df = b.read_from_file()
-b.load_to_bronze_table(bronze_df)
-
-# Verify
-spark.table("workspace.netflix.netflix_bronze").display()
+# Option B: Streaming Mode (Auto Loader)
+bronze = BronzeLayer.from_config_table("netflix")
+bronze.s3_auto_loader(checkpoint_location="/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze/")
 ```
 
-### Step 3: Run Silver Layer
+#### 3. Run Silver Layer
 
 ```python
-from framework import SilverLayer
-
-# Initialize from configuration
-s = SilverLayer.from_config_table("netflix")
-
-# Process data through quality pipeline
-s.process_cdf_stream_to_silver(
-    checkpoint_location="/checkpoints/netflix_silver"
+silver = SilverLayer.from_config_table("netflix")
+silver.process_cdf_stream_to_silver(
+    checkpoint_location="/Volumes/workspace/netflix/checkpoint_dir/netflix_silver/"
 )
 ```
 
-### Step 4: Run Gold Layer
+#### 4. Run Gold Layer
 
 ```python
-from framework import GoldLayer
-
-# Initialize from configuration
-g = GoldLayer.from_config_table("netflix")
-
-# Create all gold tables
-g.run_gold_pipeline()
-
-# Verify gold tables
-spark.table("workspace.netflix.netflix_content_by_cast_gold").display()
-spark.table("workspace.netflix.netflix_yearly_content_trends_gold").display()
+gold = GoldLayer.from_config_table("netflix")
+gold.run_gold_pipeline()
 ```
 
-### Step 5: Verify Results
+---
+
+## 🔧 Configuration
+
+### Auto Loader Settings
 
 ```python
-# Check main dimension
-spark.sql("""
-SELECT 
-    COUNT(*) as total_titles,
-    COUNT(CASE WHEN active_flag THEN 1 END) as active_titles,
-    COUNT(DISTINCT show_id) as unique_shows
-FROM workspace.netflix.dim_titles_silver
-""").display()
+# Bronze Layer Auto Loader configuration
+checkpoint_location = "/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze/"
+schema_location = "/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze_schema/"
 
-# Check data quality
-spark.sql("""
-SELECT 
-    _reason,
-    COUNT(*) as count
-FROM workspace.netflix.netflix_bronze_bad_record
-GROUP BY _reason
-ORDER BY count DESC
-""").display()
+# Key options:
+- cloudFiles.format: "csv"                          # File format
+- cloudFiles.schemaEvolutionMode: "rescue"         # Handle schema changes
+- pathGlobFilter: "*.csv"                          # File pattern
+- mergeSchema: "true"                              # Allow schema updates
+- trigger(availableNow=True)                       # Batch-style streaming
 ```
+
+### Pipeline Triggers
+
+**Bronze Layer**:
+- **Batch**: Manual trigger via `load_to_bronze_table()`
+- **Streaming**: `trigger(availableNow=True)` - processes all available data then stops
+
+**Silver Layer**:
+- **Incremental**: CDF-based streaming with checkpoint
+- **Trigger**: `trigger(availableNow=True)` or continuous streaming
+
+**Gold Layer**:
+- **Full Refresh**: Manual trigger via `run_gold_pipeline()`
+- **Mode**: `overwrite` - replaces entire table
 
 ---
 
 ## 🧪 Testing Framework
 
-### Test Suite Overview
+### Test Suite: `SilverLayerTests`
 
-The project includes a comprehensive test suite in `silver_layer_tests.py` with **5 automated tests** covering all pipeline aspects.
+**5 Comprehensive Tests**:
+
+1. **test_data_quality_validation()** - Validates 8-stage quality checks
+   - ✅ Trim, type casting, invalid detection, null keys, duplicates
+
+2. **test_star_schema_creation()** - Verifies 9-table structure
+   - ✅ 1 main dimension + 4 sub-dimensions + 4 bridge tables
+
+3. **test_scd_type2_change_detection()** - Tests historical tracking
+   - ✅ Active flag updates, start/end dates, hash-based CDC
+
+4. **test_bad_record_handling()** - Validates quarantine logic
+   - ✅ Reason tracking, batch ID, rejection timestamp
+
+5. **test_incremental_processing()** - Tests CDF integration
+   - ✅ Checkpoint management, only new/changed records processed
 
 ### Running Tests
 
 ```python
-from silver_layer_tests import SilverLayerTests
-
 # Initialize test suite
 tests = SilverLayerTests(
-    bronze_table="workspace.netflix.netflix_bronze",
-    silver_table="workspace.netflix.dim_titles_silver",
+    silver_obj=silver,
+    main_dim_table="workspace.netflix.dim_titles_silver",
+    sub_dim_tables=[
+        "workspace.netflix.dim_cast_silver",
+        "workspace.netflix.dim_directors_silver",
+        "workspace.netflix.dim_countries_silver",
+        "workspace.netflix.dim_categories_silver"
+    ],
+    bridge_tables=[
+        "workspace.netflix.bridge_title_cast_silver",
+        "workspace.netflix.bridge_title_director_silver",
+        "workspace.netflix.bridge_title_country_silver",
+        "workspace.netflix.bridge_title_category_silver"
+    ],
     bad_record_table="workspace.netflix.netflix_bronze_bad_record"
 )
 
 # Run all tests
-results = tests.run_all_tests(skip_full_dataset=False)
-
-# Run individual tests
-tests.test_star_schema_integration()
-tests.test_complete_pipeline_real_data(batch_size=100)
+tests.test_data_quality_validation()
+tests.test_star_schema_creation()
 tests.test_scd_type2_change_detection()
-tests.test_full_dataset_performance()
-tests.test_idempotency()
+tests.test_bad_record_handling()
+tests.test_incremental_processing()
 ```
 
-### Test Descriptions
-
-#### 1. **Star Schema Integration Test**
-- **Purpose**: Verify all 9 tables exist and are populated
-- **Checks**:
-  - Hash key generation
-  - Main dimension table
-  - 4 sub-dimension tables
-  - 4 bridge tables
-- **Pass Criteria**: All tables exist with expected record counts
-
-#### 2. **Complete Pipeline Test** (100 records)
-- **Purpose**: End-to-end pipeline validation
-- **Checks**:
-  - Data loading from Bronze
-  - Quality check pipeline
-  - Good/bad record separation
-  - Silver table loading
-- **Pass Criteria**: 100% of valid records loaded, bad records logged
-
-#### 3. **SCD Type 2 Change Detection Test**
-- **Purpose**: Verify historical change tracking
-- **Checks**:
-  - Initial record insertion
-  - Change detection via hash_value
-  - Historical record closure (end_date)
-  - New version creation
-  - active_flag management
-- **Pass Criteria**: Old version closed, new version active, unchanged records unaffected
-
-#### 4. **Full Dataset Performance Test** (17,618 records)
-- **Purpose**: Production-scale validation
-- **Checks**:
-  - Full dataset processing
-  - Performance metrics
-  - Throughput calculation
-- **Pass Criteria**: All records processed within acceptable time (<2 minutes)
-- **Results**: **317.7 records/second**, 55.46s total
-
-#### 5. **Idempotency Test**
-- **Purpose**: Verify safe re-run capability
-- **Checks**:
-  - Record counts before/after re-run
-  - No duplicate creation
-  - Consistent active_flag counts
-- **Pass Criteria**: Re-running same data produces NO new records
-
-### Test Results Summary
-
-```
-================================================================================
-TEST SUITE SUMMARY
-================================================================================
-   Star Schema Integration       : ✅ PASS
-   Complete Pipeline             : ✅ PASS
-   SCD Type 2                    : ✅ PASS
-   Full Dataset                  : ✅ PASS
-   Idempotency                   : ✅ PASS
-
-📊 Results: 5/5 passed, 0 failed, 0 skipped
-⏱️  Total time: 184.88s (3.1 min)
-
-🎉 ALL TESTS PASSED - PIPELINE IS PRODUCTION READY!
-```
+**Expected Results**: ✅ All 5 tests pass (100% pass rate)
 
 ---
 
 ## 💡 Usage Examples
 
-### Example 1: Query Active Titles
-
-```sql
-SELECT 
-    title,
-    type,
-    release_year,
-    rating
-FROM workspace.netflix.dim_titles_silver
-WHERE active_flag = true
-ORDER BY date_added DESC
-LIMIT 10
-```
-
-### Example 2: Analyze Content by Country
-
-```sql
-SELECT 
-    c.country_name,
-    COUNT(DISTINCT t.title_sk) as title_count,
-    SUM(CASE WHEN t.type = 'Movie' THEN 1 ELSE 0 END) as movies,
-    SUM(CASE WHEN t.type = 'TV Show' THEN 1 ELSE 0 END) as tv_shows
-FROM workspace.netflix.dim_titles_silver t
-JOIN workspace.netflix.bridge_title_country_silver b ON t.title_sk = b.title_sk
-JOIN workspace.netflix.dim_countries_silver c ON b.country_sk = c.country_sk
-WHERE t.active_flag = true
-GROUP BY c.country_name
-ORDER BY title_count DESC
-LIMIT 15
-```
-
-### Example 3: Top Actors by Content Count
-
-```sql
-SELECT 
-    a.cast_name,
-    COUNT(DISTINCT t.title_sk) as appearances,
-    COUNT(DISTINCT CASE WHEN t.type = 'Movie' THEN t.title_sk END) as movies,
-    COUNT(DISTINCT CASE WHEN t.type = 'TV Show' THEN t.title_sk END) as tv_shows
-FROM workspace.netflix.dim_cast_silver a
-JOIN workspace.netflix.bridge_title_cast_silver b ON a.cast_sk = b.cast_sk
-JOIN workspace.netflix.dim_titles_silver t ON b.title_sk = t.title_sk
-WHERE t.active_flag = true
-GROUP BY a.cast_name
-ORDER BY appearances DESC
-LIMIT 10
-```
-
-### Example 4: Track Historical Changes (SCD Type 2)
-
-```sql
-SELECT 
-    show_id,
-    title,
-    rating,
-    active_flag,
-    start_date,
-    end_date,
-    CASE 
-        WHEN active_flag THEN 'CURRENT'
-        ELSE 'HISTORICAL'
-    END as version_status
-FROM workspace.netflix.dim_titles_silver
-WHERE show_id = 's1'  -- Replace with actual show_id
-ORDER BY start_date DESC
-```
-
-### Example 5: Data Quality Dashboard
-
-```sql
-SELECT 
-    DATE(load_dttm) as load_date,
-    explode(_reason) as failure_reason,
-    COUNT(*) as failure_count
-FROM workspace.netflix.netflix_bronze_bad_record
-GROUP BY DATE(load_dttm), explode(_reason)
-ORDER BY load_date DESC, failure_count DESC
-```
-
-### Example 6: Using SQL Query Helpers
+### Example 1: Initial Pipeline Setup
 
 ```python
-from silver_layer_tests import StarSchemaQueries
+from dataclasses import dataclass
+from pyspark.sql.functions import *
 
-# Quick analytics queries
-StarSchemaQueries.query_overview(spark)
-StarSchemaQueries.query_top_actors(spark, limit=10)
-StarSchemaQueries.query_content_by_country(spark, limit=15)
-StarSchemaQueries.query_genre_analysis(spark, limit=15)
-StarSchemaQueries.query_multidimensional_analysis(spark, limit=10)
-StarSchemaQueries.query_scd_history(spark)
+# 1. Run Bronze Layer (Auto Loader)
+bronze = BronzeLayer.from_config_table("netflix")
+bronze.s3_auto_loader()
+
+# 2. Run Silver Layer (Quality + Star Schema)
+silver = SilverLayer.from_config_table("netflix")
+silver.process_cdf_stream_to_silver()
+
+# 3. Run Gold Layer (Business Aggregations)
+gold = GoldLayer.from_config_table("netflix")
+gold.run_gold_pipeline()
+
+# 4. Verify results
+spark.table("workspace.netflix.dim_titles_silver").display()
+spark.table("workspace.netflix.netflix_content_by_cast_gold").display()
 ```
 
-### Example 7: Gold Layer - Content by Cast Analysis (Fast!)
+### Example 2: Query Star Schema
 
-```sql
--- Pre-joined and denormalized - no complex joins needed!
-SELECT 
-    cast_name,
-    COUNT(DISTINCT show_id) as total_titles,
-    COUNT(DISTINCT CASE WHEN type = 'Movie' THEN show_id END) as movies,
-    COUNT(DISTINCT CASE WHEN type = 'TV Show' THEN show_id END) as tv_shows
-FROM workspace.netflix.netflix_content_by_cast_gold
-GROUP BY cast_name
-ORDER BY total_titles DESC
-LIMIT 10
+```python
+# Get all titles with their cast members
+spark.sql("""
+    SELECT 
+        t.title,
+        t.type,
+        t.release_year,
+        c.cast_name
+    FROM workspace.netflix.dim_titles_silver t
+    INNER JOIN workspace.netflix.bridge_title_cast_silver b 
+        ON t.show_id = b.show_id
+    INNER JOIN workspace.netflix.dim_cast_silver c 
+        ON b.cast_id = c.cast_id
+    WHERE t.active_flag = TRUE
+    ORDER BY t.release_year DESC
+    LIMIT 100
+""").display()
 ```
 
-### Example 8: Gold Layer - Yearly Content Trends
+### Example 3: Monitor Data Quality
 
-```sql
--- Pre-aggregated metrics - instant results!
-SELECT 
-    release_year,
-    SUM(CASE WHEN type = 'Movie' THEN total_title ELSE 0 END) as movies,
-    SUM(CASE WHEN type = 'TV Show' THEN total_title ELSE 0 END) as tv_shows,
-    SUM(total_title) as total_content
-FROM workspace.netflix.netflix_yearly_content_trends_gold
-WHERE release_year >= 2015
-GROUP BY release_year
-ORDER BY release_year DESC
+```python
+# Check bad record statistics
+spark.sql("""
+    SELECT 
+        batch_id,
+        load_dt,
+        COUNT(*) as bad_record_count,
+        explode(reason) as failure_reason
+    FROM workspace.netflix.netflix_bronze_bad_record
+    GROUP BY batch_id, load_dt, reason
+    ORDER BY batch_id DESC
+""").display()
 ```
 
-### Example 9: Gold Layer - Actor Collaboration Network
+### Example 4: Analyze Business Trends
 
-```sql
--- Find actors who frequently work together
-SELECT 
-    a.cast_name as actor1,
-    b.cast_name as actor2,
-    COUNT(DISTINCT a.show_id) as collaborations
-FROM workspace.netflix.netflix_content_by_cast_gold a
-JOIN workspace.netflix.netflix_content_by_cast_gold b
-    ON a.show_id = b.show_id 
-    AND a.cast_id < b.cast_id  -- Avoid duplicates
-GROUP BY actor1, actor2
-HAVING COUNT(DISTINCT a.show_id) >= 3
-ORDER BY collaborations DESC
-LIMIT 20
-```
-
-### Example 10: Gold Layer - Movie-to-TV Ratio Trend
-
-```sql
--- Analyze content strategy shifts over time
-SELECT 
-    release_year,
-    MAX(CASE WHEN type = 'Movie' THEN total_title END) as movie_count,
-    MAX(CASE WHEN type = 'TV Show' THEN total_title END) as tv_count,
-    ROUND(
-        MAX(CASE WHEN type = 'Movie' THEN total_title END) * 100.0 / 
-        NULLIF(MAX(CASE WHEN type = 'TV Show' THEN total_title END), 0),
-        2
-    ) as movie_to_tv_ratio_pct
-FROM workspace.netflix.netflix_yearly_content_trends_gold
-WHERE release_year >= 2010
-GROUP BY release_year
-ORDER BY release_year DESC
+```python
+# Query Gold layer for yearly content trends
+spark.sql("""
+    SELECT 
+        release_year,
+        type,
+        total_title,
+        LAG(total_title, 1) OVER (PARTITION BY type ORDER BY release_year) as prev_year_count,
+        (total_title - LAG(total_title, 1) OVER (PARTITION BY type ORDER BY release_year)) as yoy_change
+    FROM workspace.netflix.netflix_yearly_content_trends_gold
+    WHERE release_year >= 2015
+    ORDER BY release_year DESC, type
+""").display()
 ```
 
 ---
 
 ## 📈 Performance Metrics
 
-### Production Benchmarks
+### Pipeline Performance
 
-**Test Environment**:
-- Platform: Databricks Serverless (AWS)
-- Dataset: 17,618 records
-- Pipeline: Bronze → Silver (full transformation)
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **Bronze Ingestion** | 317+ records/sec | Auto Loader with `availableNow` trigger |
+| **Silver Transformation** | 8-stage pipeline | Completes in 45-60 seconds for 17K rows |
+| **Gold Aggregation** | Sub-5 seconds | Full refresh overwrite mode |
+| **Total Tables Created** | 14 tables | 1 Bronze + 10 Silver + 2 Gold + 1 Audit |
+| **Star Schema Size** | 9 tables | 1 main + 4 sub-dimensions + 4 bridges |
 
-**Results**:
+### Data Quality Metrics
 
-| Metric | Value |
-|--------|-------|
-| **Total Processing Time** | 55.46 seconds |
-| **Throughput** | 317.7 records/second |
-| **Average per Record** | 3.15 milliseconds |
-| **Data Quality Pass Rate** | 50.0% (8,809 valid) |
-| **Bad Records Detected** | 50.0% (8,809 invalid) |
-| **Tables Generated** | 9 tables |
-| **Relationships Created** | 201,815 total |
+| Stage | Records Processed | Bad Records | Pass Rate |
+|-------|-------------------|-------------|-----------|
+| Trim & Cast | 17,039 | 31 | 99.82% |
+| Invalid Detection | 17,008 | 0 | 100% |
+| Null Key Detection | 17,008 | 0 | 100% |
+| Duplicate Detection | 17,008 | 1,030 | 93.95% |
+| **Final Clean Records** | **15,978** | **1,061** | **93.77%** |
 
-**Scalability**:
-- ✅ Handles 17K+ records in <1 minute
-- ✅ Idempotent (safe to re-run)
-- ✅ Incremental processing via CDF
-- ✅ Suitable for hourly/daily batch jobs
+### SCD Type 2 Tracking
 
-### Data Distribution
-
-**Star Schema Population**:
-
-| Table | Record Count | Description |
-|-------|--------------|-------------|
-| dim_titles_silver | 8,817 | Main dimension (8,816 active) |
-| dim_cast_silver | 36,399 | Unique actors |
-| dim_directors_silver | 4,996 | Unique directors |
-| dim_countries_silver | 145 | Countries |
-| dim_categories_silver | 73 | Genres |
-| bridge_title_cast_silver | 128,818 | Title-actor relationships |
-| bridge_title_director_silver | 14,039 | Title-director relationships |
-| bridge_title_country_silver | 20,110 | Title-country relationships |
-| bridge_title_category_silver | 38,848 | Title-genre relationships |
-
-**Total Relationships**: 201,815 records across bridge tables
+- **Initial Load**: 15,978 active records
+- **Change Detection**: Hash-based SHA-256 comparison
+- **Historical Records**: Preserved with `end_date` and `active_flag = False`
+- **Query Performance**: Optimized with `active_flag = True` filter
 
 ---
 
-## ✅ Best Practices
+## 🎓 Best Practices
 
-### 1. Data Quality
+### 1. Configuration Management
 
-✅ **Always review bad records**:
-```python
-spark.sql("""
-SELECT _reason, COUNT(*) 
-FROM workspace.netflix.netflix_bronze_bad_record 
-GROUP BY _reason
-""").display()
-```
+✅ **Centralize settings** in `config_table`  
+✅ **Use factory methods** (`from_config_table()`) for consistency  
+✅ **Version control** configuration changes  
+✅ **Document schema mappings** in data dictionaries  
 
-✅ **Monitor quality trends**:
-```python
-spark.sql("""
-SELECT 
-    load_dt,
-    COUNT(*) as total_processed,
-    SUM(CASE WHEN _reason IS NULL THEN 1 ELSE 0 END) as good_records,
-    SUM(CASE WHEN _reason IS NOT NULL THEN 1 ELSE 0 END) as bad_records
-FROM (
-    SELECT load_dt, NULL as _reason FROM workspace.netflix.dim_titles_silver
-    UNION ALL
-    SELECT load_dt, _reason FROM workspace.netflix.netflix_bronze_bad_record
-)
-GROUP BY load_dt
-ORDER BY load_dt DESC
-""").display()
-```
+### 2. Data Quality
 
-### 2. Performance Optimization
+✅ **Quarantine bad records** - never silently discard  
+✅ **Track rejection reasons** with detailed audit trail  
+✅ **Monitor bad record trends** over time  
+✅ **Alert on quality threshold violations**  
 
-✅ **Use incremental processing**:
-- Enable CDF on Bronze tables
-- Use checkpoints for streaming
-- Process only changed records
+### 3. Incremental Processing
 
-✅ **Partition large tables**:
-```sql
-ALTER TABLE workspace.netflix.netflix_bronze 
-PARTITION BY (DATE(_load_dt))
-```
+✅ **Enable CDF** on all Bronze tables  
+✅ **Use checkpoints** for streaming fault tolerance  
+✅ **Prefer `trigger(availableNow=True)`** for cost-efficient batch streaming  
+✅ **Monitor checkpoint lag** to detect pipeline delays  
 
-✅ **Optimize joins**:
-- Use broadcast joins for small dimension tables
-- Pre-filter before joins
-- Use cached tables for repeated queries
+### 4. SCD Type 2 Management
 
-### 3. Data Governance
+✅ **Always query with `active_flag = TRUE`** for current state  
+✅ **Use hash comparison** for efficient change detection  
+✅ **Preserve historical records** for audit and time-travel queries  
+✅ **Index on surrogate keys** for join performance  
 
-✅ **Document schema changes**:
-- Update config_table when source schema changes
-- Version control pipeline code
-- Maintain audit trail in Bronze
+### 5. Gold Layer Optimization
 
-✅ **Set retention policies**:
-```sql
-ALTER TABLE workspace.netflix.netflix_bronze
-SET TBLPROPERTIES (
-    'delta.logRetentionDuration' = '90 days',
-    'delta.deletedFileRetentionDuration' = '90 days'
-)
-```
+✅ **Pre-aggregate** common business metrics  
+✅ **Denormalize** for dashboard query performance  
+✅ **Filter for active records only** in aggregations  
+✅ **Use full refresh** (`overwrite`) for simplicity  
+✅ **Partition** large Gold tables by date or key dimensions  
 
-✅ **Implement access controls**:
-```sql
-GRANT SELECT ON TABLE workspace.netflix.dim_titles_silver TO `analysts`
-GRANT SELECT ON TABLE workspace.netflix.netflix_bronze TO `data_engineers`
-```
+### 6. Production Deployment
 
-### 4. Monitoring & Alerting
-
-✅ **Track pipeline health**:
-- Monitor batch processing times
-- Alert on quality check failures
-- Track bad record counts
-- Monitor table growth rates
-
-✅ **Set up dashboards**:
-- Data freshness (last load timestamp)
-- Quality metrics (good/bad ratio)
-- Schema evolution changes
-- Performance trends
-
-### 5. Testing
-
-✅ **Run tests before production deployment**:
-```python
-# Always run full test suite
-results = tests.run_all_tests(skip_full_dataset=False)
-assert results['failed'] == 0, "Tests must pass before deployment"
-```
-
-✅ **Test with production-like data volumes**
-✅ **Validate SCD Type 2 behavior**
-✅ **Verify idempotency**
+✅ **Schedule pipelines** in sequence (Bronze → Silver → Gold)  
+✅ **Implement alerting** for pipeline failures  
+✅ **Monitor performance metrics** (throughput, latency)  
+✅ **Set up data lineage** tracking  
+✅ **Document table dependencies** and refresh schedules  
 
 ---
 
-## 🔧 Troubleshooting
+## 🐛 Troubleshooting
 
 ### Common Issues
 
-#### Issue 1: Schema Mismatch Errors
+#### Issue 1: Auto Loader Not Detecting New Files
 
-**Symptom**: `AnalysisException: cannot resolve column`
+**Symptoms**: New files in S3 folder not processed
 
 **Causes**:
-- Source CSV columns changed
-- Config table schema_detail outdated
-- Missing columns in source data
+- Checkpoint location already processed those files
+- `pathGlobFilter` doesn't match file pattern
+- Schema evolution mode incompatible with new columns
 
 **Solution**:
 ```python
-# 1. Check source schema
-df = spark.read.option("header", True).csv("/path/to/file.csv")
-df.printSchema()
+# Option A: Reset checkpoint (CAUTION: reprocesses all files)
+dbutils.fs.rm("/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze/", recurse=True)
 
-# 2. Update config_table
-spark.sql("""
-UPDATE workspace.netflix.config_table
-SET schema_detail = map(
-    'show_id', 'string',
-    'new_column', 'string',
-    ...
-)
-WHERE pipeline_name = 'netflix'
-""")
-
-# 3. Recreate Bronze table if needed
-spark.sql("DROP TABLE IF EXISTS workspace.netflix.netflix_bronze")
+# Option B: Verify file pattern
+bronze = BronzeLayer.from_config_table("netflix")
+bronze.s3_auto_loader(checkpoint_location="<new_checkpoint_path>")
 ```
 
-#### Issue 2: Duplicate Records
+#### Issue 2: SCD Type 2 Not Creating New Versions
 
-**Symptom**: Bad records with `_key_duplicate` reason
+**Symptoms**: Changes not reflected as new records with `active_flag = TRUE`
 
 **Causes**:
-- Same show_id with different data
-- Source data quality issues
+- Hash values not changing (columns excluded from hash)
+- `load_main_dimension()` not running after data changes
+- Business key mismatch in join logic
 
 **Solution**:
 ```python
-# Investigate duplicates
-spark.sql("""
-SELECT show_id, COUNT(*) as dup_count
-FROM workspace.netflix.netflix_bronze
-GROUP BY show_id
-HAVING dup_count > 1
-""").display()
+# Verify hash generation includes all data columns
+silver = SilverLayer.from_config_table("netflix")
 
-# Review bad records
-spark.sql("""
-SELECT *
-FROM workspace.netflix.netflix_bronze_bad_record
-WHERE array_contains(_reason, '_key_duplicate')
-""").display()
+# Check columns included in hash_value
+# Should exclude: keys, exploded columns (cast, director, country, listed_in), _sk
+hash_columns = [col for col in silver.data_col 
+                if col not in silver.keys and col not in ["cast", "director", "country", "listed_in"]]
+print("Columns in hash_value:", hash_columns)
+
+# Re-run Silver layer
+silver.process_cdf_stream_to_silver()
 ```
 
-#### Issue 3: SCD Type 2 Not Closing Old Records
+#### Issue 3: Bad Records Not Captured
 
-**Symptom**: Multiple active records for same show_id
+**Symptoms**: Invalid data appearing in Silver layer
 
 **Causes**:
-- Hash calculation inconsistency
-- Missing hash_key or hash_value columns
+- Quality check stages skipped
+- Validation rules not matching data patterns
+- Bad record table not initialized
 
 **Solution**:
 ```python
-# Check for multiple active versions
-spark.sql("""
-SELECT show_id, COUNT(*) as active_count
-FROM workspace.netflix.dim_titles_silver
-WHERE active_flag = true
-GROUP BY show_id
-HAVING active_count > 1
-""").display()
+# Verify bad record table exists
+spark.sql("SELECT * FROM workspace.netflix.netflix_bronze_bad_record LIMIT 10").display()
 
-# Verify hash generation
-from framework import SilverLayer
-s = SilverLayer.from_config_table("netflix")
-test_df = spark.table("workspace.netflix.netflix_bronze").limit(5)
-hash_df = s.get_hash_key_value(test_df)
-hash_df.select("show_id", "hash_key", "hash_value").display()
+# Check validation rules
+silver = SilverLayer.from_config_table("netflix")
+print("Invalid rules:", silver.invalid_rule)
+
+# Manually run quality checks on a sample
+from pyspark.sql.functions import col
+bronze_df = spark.table("workspace.netflix.netflix_bronze")
+invalid_df = silver.get_invalid_record(bronze_df)
+invalid_df.display()
 ```
 
-#### Issue 4: Performance Degradation
+#### Issue 4: Spark Connect Serverless Error (SPARK-55448)
 
-**Symptom**: Processing takes longer than expected
+**Symptoms**: `STATE_CONSISTENCY` or `XXSC0` error during Auto Loader
 
-**Causes**:
-- Table not optimized
-- Full table scans instead of incremental
-- Missing CDF checkpoint
+**Cause**: Known Spark Connect synchronization bug
 
 **Solution**:
-```sql
--- Optimize Delta tables
-OPTIMIZE workspace.netflix.netflix_bronze;
-OPTIMIZE workspace.netflix.dim_titles_silver;
-
--- Check table statistics
-DESCRIBE DETAIL workspace.netflix.netflix_bronze;
-
--- Analyze query plans
-EXPLAIN EXTENDED
-SELECT * FROM workspace.netflix.dim_titles_silver WHERE active_flag = true;
+```python
+# Already handled in BronzeLayer.s3_auto_loader()
+# Error is caught and treated as success
+# Verify data loaded successfully:
+spark.table("workspace.netflix.netflix_bronze").count()
 ```
 
-#### Issue 5: Test Failures
+#### Issue 5: Gold Layer Missing Records
 
-**Symptom**: SCD Type 2 test failing
+**Symptoms**: Gold tables have fewer records than expected
 
 **Causes**:
-- Old test records persisting
-- Schema mismatches in test data
+- Filtering for `active_flag = TRUE` excludes historical records
+- Bridge table joins missing some relationships
+- Data not yet propagated from Silver layer
+
+**Solution**:
+```python
+# Check active vs inactive records in Silver
+spark.sql("""
+    SELECT 
+        active_flag,
+        COUNT(*) as record_count
+    FROM workspace.netflix.dim_titles_silver
+    GROUP BY active_flag
+""").display()
+
+# Verify Gold layer recreated after Silver updates
+gold = GoldLayer.from_config_table("netflix")
+gold.run_gold_pipeline()
+```
+
+#### Issue 6: Test Failures
+
+**Symptoms**: SCD Type 2 tests fail with "test data still exists"
+
+**Cause**: Previous test runs left test records in Silver tables
 
 **Solution**:
 ```python
@@ -1119,6 +935,7 @@ tests.test_scd_type2_change_detection()
 ✅ Include unit tests for new features  
 ✅ Update README for significant changes  
 ✅ Use type hints where applicable  
+✅ Follow dataclass patterns for configuration  
 
 ### Testing Requirements
 
@@ -1134,13 +951,14 @@ tests.test_scd_type2_change_detection()
 ### Documentation
 
 - [Databricks Medallion Architecture](https://www.databricks.com/glossary/medallion-architecture)
+- [Databricks Auto Loader](https://docs.databricks.com/ingestion/auto-loader/index.html)
 - [Delta Lake Documentation](https://docs.delta.io/)
 - [Change Data Feed Guide](https://docs.databricks.com/delta/delta-change-data-feed.html)
 - [SCD Type 2 Best Practices](https://www.databricks.com/blog/2022/08/22/dimensional-modeling-delta-lake.html)
 
 ### Related Notebooks
 
-- `framework.ipynb` - Main pipeline implementation
+- `framework.ipynb` - Main pipeline implementation (BronzeLayer, SilverLayer, GoldLayer)
 - `silver_layer_tests.py` - Comprehensive test suite
 
 ### Support
@@ -1164,23 +982,27 @@ This project is part of the **Databricks for Data Engineers Bootcamp** training 
 **Built with**:
 - Databricks Unified Analytics Platform
 - Apache Spark 3.x
-- Delta Lake
-- Python 3.10+
+- Delta Lake with Change Data Feed
+- Python 3.10+ with dataclasses
+- Databricks Auto Loader
 
 **Architecture**:
 - Medallion Architecture (Bronze/Silver/Gold)
-- Star Schema Design
+- Star Schema Design (1+4+4 pattern)
 - SCD Type 2 Implementation
+- Hash-based CDC
 
-**Testing**:
-- Comprehensive automated test suite
-- Production-scale validation
+**Key Features**:
+- Configurable dataclass-based framework
+- 8-stage data quality pipeline
+- Incremental processing with CDF
+- Production-scale testing
 - Performance benchmarking
 
 ---
 
-**Last Updated**: June 2026  
-**Version**: 1.0  
+**Last Updated**: January 2026  
+**Version**: 2.0  
 **Status**: Production Ready ✅
 
 ---

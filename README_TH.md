@@ -17,6 +17,7 @@
 - [ส่วนประกอบของไปป์ไลน์](#ส่วนประกอบของไปป์ไลน์)
 - [โครงสร้างตาราง](#โครงสร้างตาราง)
 - [เริ่มต้นใช้งาน](#เริ่มต้นใช้งาน)
+- [การตั้งค่า](#การตั้งค่า)
 - [ระบบทดสอบ](#ระบบทดสอบ)
 - [ตัวอย่างการใช้งาน](#ตัวอย่างการใช้งาน)
 - [ประสิทธิภาพ](#ประสิทธิภาพ)
@@ -28,16 +29,19 @@
 
 ## 🎯 ภาพรวม
 
-โปรเจคนี้พัฒนา**ไปป์ไลน์ข้อมูลที่พร้อมใช้งานจริงและขยายขนาดได้**สำหรับการประมวลผลข้อมูลเนื้อหา Netflix โดยใช้ Databricks และ**สถาปัตยกรรม Medallion** ไปป์ไลน์นี้รับข้อมูล CSV แบบดิบ นำไปตรวจสอบคุณภาพข้อมูลอย่างครอบคลุม และแปลงเป็น**โครงสร้าง Star Schema** ที่เหมาะสมสำหรับการวิเคราะห์และ Business Intelligence
+โปรเจคนี้พัฒนา**ไปป์ไลน์ข้อมูลที่พร้อมใช้งานจริงและขยายขนาดได้**สำหรับการประมวลผลข้อมูลเนื้อหา Netflix โดยใช้ Databricks และ**สถาปัตยกรรม Medallion** สร้างด้วย**คลาส dataclass ที่ปรับแต่งได้** ระบบนี้รับข้อมูลดิบ ตรวจสอบคุณภาพข้อมูลอย่างครอบคลุม และแปลงเป็น**โครงสร้าง Star Schema** ที่เหมาะสำหรับการวิเคราะห์และ Business Intelligence
 
 ### ฟีเจอร์หลัก
 
+✅ **เฟรมเวิร์กที่ปรับแต่งได้**: คลาส `BronzeLayer`, `SilverLayer` และ `GoldLayer` แบบ dataclass  
 ✅ **สถาปัตยกรรม Medallion**: ชั้น Bronze (ดิบ) → Silver (สะอาด) → Gold (รวมกลุ่ม)  
-✅ **ตรวจสอบคุณภาพข้อมูล**: ไปป์ไลน์ตรวจสอบคุณภาพ 8 ขั้นตอนพร้อมติดตามข้อมูลไม่ถูกต้อง  
+✅ **Databricks Auto Loader**: การรับข้อมูลแบบเพิ่มหน่วยจาก S3 พร้อมการตรวจจับโฟลเดอร์และ schema evolution  
+✅ **ตรวจสอบคุณภาพข้อมูล**: ไปป์ไลน์ตรวจสอบคุณภาพ 8 ขั้นตอนพร้อมกักกันข้อมูลไม่ถูกต้อง  
 ✅ **SCD Type 2**: ติดตามประวัติการเปลี่ยนแปลงพร้อมความถูกต้องเชิงเวลา  
 ✅ **Star Schema**: 1 มิติหลัก + 4 มิติย่อย + 4 ตาราง Bridge  
-✅ **ตรวจจับการเปลี่ยนแปลงด้วย Hash**: การระบุความแตกต่างที่มีประสิทธิภาพ  
-✅ **ประมวลผลแบบเพิ่มหน่วย**: Change Data Feed (CDF) เพื่อประสิทธิภาพ  
+✅ **ตรวจจับการเปลี่ยนแปลงด้วย Hash**: การระบุความแตกต่างด้วย SHA-256  
+✅ **ประมวลผลแบบเพิ่มหน่วย**: เปิดใช้งาน Change Data Feed (CDF) สำหรับทุกชั้นถัดไป  
+✅ **ความสามารถขยายระดับ Production**: Structured streaming ด้วย `trigger(availableNow=True)`  
 ✅ **การทดสอบครอบคลุม**: ชุดทดสอบอัตโนมัติ 5 ชุดผ่านทั้งหมด 100%  
 ✅ **ประสิทธิภาพระดับ Production**: ประมวลผล 317+ รายการต่อวินาที  
 
@@ -66,83 +70,127 @@
        JSON          ──────►    คลังข้อมูลดิบ      ──────►      Star Schema        ──────►      การรวมกลุ่ม
       Parquet                   + Metadata                   + ตรวจสอบคุณภาพ                + การวิเคราะห์
                                 + เปิด CDF                    + SCD Type 2                   + Metrics
-                                                             + Normalization
+                                + Auto Loader                 + Normalization                + พร้อม BI
 
   ┌────────────┐              ┌────────────┐              ┌────────────────┐              ┌────────────┐
   │ netflix.csv│              │  netflix   │              │   dim_titles   │              │  Dashboard │
   │            │  ─────────►  │   _bronze  │  ─────────►  │ + 4 sub-dims   │  ─────────►  │    KPIs    │
   │ (17K แถว)  │              │            │              │ + 4 bridges    │              │  รายงาน    │
   └────────────┘              └────────────┘              │ + bad_records  │              └────────────┘
-                                     ▲                    └────────────────┘
+                                     ▲                     └────────────────┘
                                      │
                                config_table
-                              (การตั้งค่าไปป์ไลน์)
+                               (การตั้งค่าไปป์ไลน์)
 ```
 
 ### ความรับผิดชอบของแต่ละชั้น
 
 #### 🥉 **ชั้น Bronze** - การรับข้อมูลดิบ
-- **วัตถุประสงค์**: จุดลงจอดสำหรับข้อมูลภายนอก
+- **วัตถุประสงค์**: จุดลงจอดสำหรับข้อมูลภายนอกพร้อมการติดตามครบถ้วน
+- **คลาส**: `BronzeLayer` (การตั้งค่าแบบ dataclass)
 - **ลักษณะเฉพาะ**: ไม่เปลี่ยนแปลง, เพิ่มเติมเท่านั้น, schema-on-read
-- **ส่วนประกอบ**: คลาส `BronzeLayer`
-- **ฟีเจอร์**:
-  - ติดตาม metadata ของไฟล์ (`_load_dt`, `_file_name`, `_file_path`, ฯลฯ)
-  - เปิดใช้งาน Change Data Feed (CDF)
+- **ฟีเจอร์หลัก**:
+  - **Databricks Auto Loader** สำหรับการรับข้อมูลแบบเพิ่มหน่วยจาก S3/cloud storage
+  - **การตรวจจับโฟลเดอร์** - ค้นหาไฟล์ใหม่ในไดเรกทอรีโดยอัตโนมัติ
+  - **Schema evolution** ด้วย rescue mode (`cloudFiles.schemaEvolutionMode: "rescue"`)
+  - **การกำหนด schema อย่างชัดเจน** โดยใช้ StructType สำหรับคอลัมน์ metadata ที่ปลอดภัยในเรื่องชนิดข้อมูล
+  - **การติดตามไฟล์แบบ checkpoint** - ประมวลผลเฉพาะไฟล์ใหม่เท่านั้น
+  - **การจัดการข้อผิดพลาด** สำหรับกรณีพิเศษของ Spark Connect serverless (SPARK-55448)
+  - **Change Data Feed (CDF)** เปิดใช้งานสำหรับการประมวลผลแบบเพิ่มหน่วยถัดไป
+  - ติดตาม metadata ของไฟล์ (`_load_dt`, `_file_name`, `_file_path`, `_file_size`, `_file_mod`)
   - รองรับรูปแบบ CSV, JSON, Parquet
-  - ปรับแต่งได้ผ่าน `config_table`
+  - ปรับแต่งได้ผ่าน `config_table` หรือสร้างอินสแตนซ์โดยตรง
+
+**โหมด Auto Loader**:
+- **โหมด Batch**: `read_from_file()` - โหลดครั้งเดียวเต็มจำนวน
+- **โหมด Streaming**: `s3_auto_loader()` - แบบเพิ่มหน่วยด้วย `trigger(availableNow=True)`
 
 #### 🥈 **ชั้น Silver** - คุณภาพข้อมูลและ Normalization
 - **วัตถุประสงค์**: ข้อมูลที่สะอาด ตรวจสอบแล้ว พร้อมใช้งานทางธุรกิจ
-- **ลักษณะเฉพาะ**: Normalized, ลบข้อมูลซ้ำ, ตรวจสอบแล้ว
-- **ส่วนประกอบ**: คลาส `SilverLayer`
-- **ฟีเจอร์**:
-  - ไปป์ไลน์ตรวจสอบคุณภาพข้อมูล 8 ขั้นตอน
-  - Star schema ทั้งหมด 9 ตาราง
-  - ติดตามประวัติ SCD Type 2
-  - ตรวจจับการเปลี่ยนแปลงด้วย Hash
-  - บันทึกตรวจสอบข้อมูลไม่ถูกต้อง
+- **คลาส**: `SilverLayer` (การตั้งค่าแบบ dataclass)
+- **ลักษณะเฉพาะ**: Normalized, ลบข้อมูลซ้ำ, ตรวจสอบแล้ว, เปิดใช้ SCD Type 2
+- **ฟีเจอร์หลัก**:
 
-#### 🥇 **ชั้น Gold** - การวิเคราะห์และการรวมกลุ่ม
-- **วัตถุประสงค์**: การรวมกลุ่มและเมตริกเฉพาะทางธุรกิจ
-- **ลักษณะเฉพาะ**: Denormalized, รวมกลุ่มไว้ล่วงหน้า, เหมาะสำหรับ query
-- **ตัวอย่าง**: การเพิ่มเนื้อหารายเดือน, ประเภทยอดนิยม, สถิติผู้กำกับ
+**ไปป์ไลน์คุณภาพข้อมูล 8 ขั้นตอน**:
+1. `trim_data()` - ลบช่องว่างด้านหน้าและหลัง
+2. `change_data_type()` - แปลงเป็นชนิดข้อมูลเป้าหมายด้วย `try_cast()` / `try_to_date()`
+3. `get_invalid_record()` - ตรวจจับการละเมิดรูปแบบด้วย regex
+4. `get_key_null_record()` - ระบุ primary key ที่เป็น null
+5. `get_dup_record()` - ค้นหาข้อมูลซ้ำทั้งแถวและ key
+6. `get_all_bad_record()` - รวบรวมข้อมูลไม่ถูกต้องทั้งหมด
+7. `load_bad_record()` - กักกันข้อมูลไม่ถูกต้องพร้อมการติดตาม batch
+8. `get_final_result()` - ดึงข้อมูลที่สะอาด
+
+**การแปลง Star Schema**:
+- `get_hash_key_value()` - สร้าง hash SHA-256 สำหรับ CDC
+- `load_sub_dimensions()` - ใส่ข้อมูลตาราง dimension 4 ตาราง (cast, directors, countries, categories)
+- `load_bridge_tables()` - สร้างตารางความสัมพันธ์แบบ many-to-many 4 ตาราง
+- `load_main_dimension()` - ใช้ logic SCD Type 2 กับมิติหลัก
+- `process_cdf_stream_to_silver()` - จัดการไปป์ไลน์แบบเพิ่มหน่วยทั้งหมด
+
+**ผลลัพธ์**: ตาราง 9 ตาราง (1 มิติหลัก + 4 มิติย่อย + 4 bridges) + 1 ตารางข้อมูลไม่ถูกต้อง
+
+#### 🥇 **ชั้น Gold** - การรวมกลุ่มทางธุรกิจ
+- **วัตถุประสงค์**: ตารางวิเคราะห์ที่เหมาะสมที่สุดสำหรับการใช้งานของผู้ใช้ปลายทาง
+- **คลาส**: `GoldLayer` (การตั้งค่าแบบ dataclass)
+- **ลักษณะเฉพาะ**: Denormalized, รวมกลุ่มไว้ล่วงหน้า, พร้อมสำหรับ BI
+- **ฟีเจอร์หลัก**:
+
+**ตารางพร้อมใช้งานทางธุรกิจ**:
+1. `create_gold_content_by_cast()` - ความสัมพันธ์ Title-Cast แบบ Denormalized
+   - **Joins**: `dim_titles_silver` ⋈ `bridge_title_cast_silver` ⋈ `dim_cast_silver`
+   - **ผลลัพธ์**: หนึ่งแถวต่อคู่ Title-Cast หนึ่งคู่
+   - **คำถามทางธุรกิจ**: "นักแสดงคนไหนแสดงในเรื่องอะไรบ้าง?"
+
+2. `create_gold_yearly_content_trends()` - ปริมาณเนื้อหาตามปีและประเภท
+   - **การรวมกลุ่ม**: `GROUP BY release_year, type`
+   - **เมตริก**: นับจำนวนเรื่อง
+   - **คำถามทางธุรกิจ**: "ปริมาณเนื้อหาเปลี่ยนแปลงตามปีและประเภทอย่างไร?"
+
+**โมเดลการทำงาน**:
+- **โหมดการเขียน**: เสมอ `overwrite` (รีเฟรชแบบเต็ม)
+- **ความทันสมัยของข้อมูล**: สะท้อนสถานะล่าสุดของชั้น Silver
+- **ประสิทธิภาพ Query**: Join และรวมกลุ่มไว้ล่วงหน้าสำหรับ query BI ที่เร็ว
+- **เฉพาะข้อมูล Active**: กรองสำหรับ `active_flag = True` จาก SCD Type 2 dimensions
+- **การใช้งาน**: Dashboard, รายงาน, การวิเคราะห์ ad-hoc, self-service BI
 
 ---
 
 ## 📂 โครงสร้างโปรเจค
 
 ```
-Netflix_project/
+Databricks-for-Data-Engineers-Bootcamp2/
 │
-├── framework.ipynb                      # การใช้งานไปป์ไลน์หลัก
-│   ├── คลาส BronzeLayer                # โลจิกการรับข้อมูล Bronze
-│   ├── คลาส SilverLayer                # โลจิกการแปลง Silver
-│   ├── คลาส GoldLayer                  # โลจิกการรวมกลุ่ม Gold
-│   ├── เอกสาร Bronze (markdown)         # คู่มือ Bronze แบบทีละขั้นตอน
-│   ├── เอกสาร Silver (markdown)         # คู่มือ Silver แบบทีละขั้นตอน
-│   └── เอกสาร Gold (markdown)           # คู่มือ Gold แบบทีละขั้นตอน
+├── Netflix_project/
+│   └── framework.ipynb                 # การใช้งานไปป์ไลน์หลัก
+│       ├── คลาส BronzeLayer          # โลจิกการรับข้อมูล Bronze
+│       ├── คลาส SilverLayer          # โลจิกคุณภาพและการแปลงข้อมูล
+│       ├── คลาส GoldLayer            # โลจิกการรวมกลุ่มทางธุรกิจ
+│       ├── เอกสาร Bronze (MD)         # คู่มือ Bronze แบบทีละขั้นตอน
+│       ├── เอกสาร Silver (MD)         # คู่มือ Silver แบบทีละขั้นตอน
+│       └── เอกสาร Gold (MD)           # คู่มือ Gold แบบทีละขั้นตอน
 │
 ├── silver_layer_tests.py                # ชุดทดสอบครอบคลุม
 │   ├── คลาส SilverLayerTests           # วิธีทดสอบอัตโนมัติ 5 วิธี
 │   └── คลาส StarSchemaQueries          # ตัวช่วย SQL analytics
 │
 ├── README.md                            # เอกสารภาษาอังกฤษ
-├── README_TH.md                         # ไฟล์นี้
+├── README_TH.md                         # ไฟล์นี้ (เอกสารภาษาไทย)
 │
 └── ตารางข้อมูล:
-    ├── workspace.netflix.config_table              # การตั้งค่าไปป์ไลน์
-    ├── workspace.netflix.netflix_bronze            # ข้อมูลดิบ (Bronze)
-    ├── workspace.netflix.dim_titles_silver         # มิติหลัก (Silver)
-    ├── workspace.netflix.dim_cast_silver           # มิติย่อยนักแสดง
-    ├── workspace.netflix.dim_directors_silver      # มิติย่อยผู้กำกับ
-    ├── workspace.netflix.dim_countries_silver      # มิติย่อยประเทศ
-    ├── workspace.netflix.dim_categories_silver     # มิติย่อยประเภท
-    ├── workspace.netflix.bridge_title_cast_silver  # ความสัมพันธ์ชื่อเรื่อง-นักแสดง
-    ├── workspace.netflix.bridge_title_director_silver
-    ├── workspace.netflix.bridge_title_country_silver
-    ├── workspace.netflix.bridge_title_category_silver
-    ├── workspace.netflix.netflix_bronze_bad_record # บันทึกตรวจสอบข้อมูลไม่ถูกต้อง
-    ├── workspace.netflix.netflix_content_by_cast_gold # Cast แบบ Denormalized (Gold)
+    ├── workspace.netflix.config_table                      # การตั้งค่าไปป์ไลน์
+    ├── workspace.netflix.netflix_bronze                    # ข้อมูลดิบ (Bronze)
+    ├── workspace.netflix.dim_titles_silver                 # มิติหลัก (Silver)
+    ├── workspace.netflix.dim_cast_silver                   # มิติย่อยนักแสดง
+    ├── workspace.netflix.dim_directors_silver              # มิติย่อยผู้กำกับ
+    ├── workspace.netflix.dim_countries_silver              # มิติย่อยประเทศ
+    ├── workspace.netflix.dim_categories_silver             # มิติย่อยประเภท
+    ├── workspace.netflix.bridge_title_cast_silver          # ความสัมพันธ์ชื่อเรื่อง-นักแสดง
+    ├── workspace.netflix.bridge_title_director_silver      # ความสัมพันธ์ชื่อเรื่อง-ผู้กำกับ
+    ├── workspace.netflix.bridge_title_country_silver       # ความสัมพันธ์ชื่อเรื่อง-ประเทศ
+    ├── workspace.netflix.bridge_title_category_silver      # ความสัมพันธ์ชื่อเรื่อง-ประเภท
+    ├── workspace.netflix.netflix_bronze_bad_record         # การกักกันข้อมูลไม่ถูกต้อง
+    ├── workspace.netflix.netflix_content_by_cast_gold      # Cast แบบ Denormalized (Gold)
     └── workspace.netflix.netflix_yearly_content_trends_gold # แนวโน้มรายปี (Gold)
 ```
 
@@ -158,37 +206,58 @@ Netflix_project/
 # การตั้งค่าไปป์ไลน์แบบรวมศูนย์
 คอลัมน์ config_table:
 - pipeline_name: str          # ตัวระบุเฉพาะ (เช่น "netflix")
-- file_path: str              # ตำแหน่งข้อมูลต้นทาง
+- file_path: str              # ตำแหน่งข้อมูลต้นทาง (ไฟล์หรือโฟลเดอร์)
 - header: bool                # การมีแถวหัวตาราง CSV
 - delimiter: str              # ตัวแบ่งฟิลด์
-- table_name: str             # ตาราง Bronze เป้าหมาย
-- schema_detail: map          # การแมปคอลัมน์ → ชนิดข้อมูล
+- table_name: str             # ชื่อตาราง Bronze เป้าหมาย
+- schema_detail: map          # การแมปชื่อคอลัมน์ → ชนิดข้อมูล
 - keys: array                 # คอลัมน์ Primary key
 - write_mode: str             # append/overwrite
 ```
 
 ### 2. ชั้น Bronze (คลาส `BronzeLayer`)
 
+**Factory Method**:
+```python
+bronze = BronzeLayer.from_config_table("netflix")
+```
+
 **ความรับผิดชอบ**:
-- อ่านข้อมูลจากไฟล์ (CSV, JSON, Parquet)
-- เพิ่มคอลัมน์ metadata สำหรับการติดตามที่มา
-- เริ่มต้นตาราง Delta พร้อม CDF
-- รูปแบบการโหลดแบบเพิ่มเติมเท่านั้น
+- อ่านข้อมูลจากไฟล์ (CSV, JSON, Parquet) หรือโฟลเดอร์
+- เพิ่มคอลัมน์ metadata สำหรับการติดตามแหล่งที่มา
+- เริ่มต้นตาราง Delta พร้อม CDF เปิดใช้งาน
+- รองรับทั้งการรับข้อมูลแบบ batch และ streaming
 
 **เมธอดหลัก**:
-- `from_config_table(pipeline_name)` - Factory method
-- `read_from_file()` - โหลดและเพิ่ม metadata
-- `load_to_bronze_table(df)` - เพิ่มเติมไปยังตาราง Bronze
-- `_init_bronze_table()` - การสร้างตารางครั้งแรก
+- `from_config_table(pipeline_name)` - Factory method จากการตั้งค่า
+- `read_from_file()` - โหมด Batch: โหลดไฟล์และเพิ่ม metadata
+- `s3_auto_loader(checkpoint_location)` - โหมด Streaming: Auto Loader พร้อม checkpoint
+- `load_to_bronze_table(df)` - เพิ่มข้อมูลเข้าตาราง Bronze
+- `_init_bronze_table()` - เริ่มต้นตารางพร้อม CDF ในการรันครั้งแรก
+
+**การตั้งค่า Auto Loader**:
+```python
+# Schema evolution และการค้นหาไฟล์
+.option("cloudFiles.schemaEvolutionMode", "rescue")
+.option("pathGlobFilter", "*.csv")
+.option("cloudFiles.schemaLocation", schema_location)
+.option("mergeSchema", "true")
+.trigger(availableNow=True)  # Batch-style streaming สำหรับประหยัดต้นทุน
+```
 
 ### 3. ชั้น Silver (คลาส `SilverLayer`)
 
+**Factory Method**:
+```python
+silver = SilverLayer.from_config_table("netflix")
+```
+
 **ความรับผิดชอบ**:
 - ประมวลผลการเปลี่ยนแปลงแบบเพิ่มหน่วยผ่าน CDF
-- ตรวจสอบคุณภาพข้อมูล 8 ขั้นตอน
+- ดำเนินการตรวจสอบคุณภาพข้อมูล 8 ขั้นตอน
 - แปลงเป็น star schema (9 ตาราง)
-- ใช้ SCD Type 2 สำหรับติดตามการเปลี่ยนแปลง
-- บันทึกข้อมูลไม่ถูกต้องเพื่อการตรวจสอบ
+- ใช้ SCD Type 2 สำหรับติดตามประวัติ
+- กักกันข้อมูลไม่ถูกต้องเพื่อการตรวจสอบ
 
 **เมธอดหลัก**:
 
@@ -203,43 +272,59 @@ Netflix_project/
 8. `get_final_result()` - ดึงข้อมูลที่สะอาด
 
 #### การสร้าง Star Schema:
-- `get_hash_key_value()` - สร้าง hash สำหรับตรวจจับการเปลี่ยนแปลง
-- `load_sub_dimensions()` - โหลดข้อมูลหลัก (นักแสดง, ผู้กำกับ, ฯลฯ)
-- `load_bridge_tables()` - โหลดความสัมพันธ์แบบ many-to-many
+- `get_hash_key_value()` - สร้าง hash สำหรับ CDC
+- `load_sub_dimensions()` - ใส่ข้อมูล masters (cast, directors, ฯลฯ)
+- `load_bridge_tables()` - สร้างความสัมพันธ์แบบ many-to-many
 - `load_main_dimension()` - SCD Type 2 upserts
-- `process_cdf_stream_to_silver()` - จัดการไปป์ไลน์ทั้งหมด
+- `process_cdf_stream_to_silver()` - จัดการไปป์ไลน์เต็มรูปแบบ
 
-### 4. ชั้น Gold (`GoldLayer` class)
+**การประมวลผลแบบเพิ่มหน่วย**:
+```python
+# อ่านเฉพาะการเปลี่ยนแปลงจาก Bronze
+bronze_cdf = (
+    spark.readStream
+    .option("readChangeFeed", "true")
+    .option("startingVersion", 0)
+    .table("workspace.netflix.netflix_bronze")
+)
+```
+
+### 4. ชั้น Gold (คลาส `GoldLayer`)
+
+**Factory Method**:
+```python
+gold = GoldLayer.from_config_table("netflix")
+```
 
 **ความรับผิดชอบ**:
 - สร้างตารางการวิเคราะห์แบบ Denormalized
-- คำนวณเมตริกทางธุรกิจและ KPI ล่วงหน้า
-- กรองเฉพาะข้อมูลปัจจุบัน (`active_flag = True`)
-- เหมาะสำหรับ Dashboard และเครื่องมือ BI
-- รูปแบบการรีเฟรชแบบเต็ม (โหมด overwrite)
+- คำนวณเมตริกและ KPI ทางธุรกิจล่วงหน้า
+- กรองสำหรับข้อมูล active เท่านั้น (`active_flag = True`)
+- เพิ่มประสิทธิภาพสำหรับ dashboard และเครื่องมือ BI
+- รูปแบบ full refresh (โหมด overwrite)
 
 **เมธอดหลัก**:
 
 #### ตาราง Denormalized:
-- `create_gold_content_by_cast()` - รวมความสัมพันธ์ Title-Cast แบบ Many-to-Many
+- `create_gold_content_by_cast()` - แบนความสัมพันธ์ Title-Cast แบบ Many-to-Many
   - Joins: `dim_titles_silver` ⋈ `bridge_title_cast_silver` ⋈ `dim_cast_silver`
-  - Output: หนึ่งแถวต่อ Title-Cast หนึ่งคู่
+  - ผลลัพธ์: หนึ่งแถวต่อคู่ Title-Cast หนึ่งคู่
   - คำถามทางธุรกิจ: "นักแสดงคนไหนแสดงในเรื่องอะไรบ้าง?"
 
-- `create_gold_yearly_content_trends()` - รวมกลุ่มปริมาณเนื้อหาตามปีและประเภท
+- `create_gold_yearly_content_trends()` - รวมปริมาณเนื้อหาตามปีและประเภท
   - การรวมกลุ่ม: `GROUP BY release_year, type`
   - เมตริก: นับจำนวนเรื่อง
   - คำถามทางธุรกิจ: "ปริมาณเนื้อหาเปลี่ยนแปลงตามปีและประเภทอย่างไร?"
 
 #### การจัดการไปป์ไลน์:
 - `from_config_table(pipeline_name)` - Factory method จากการตั้งค่า
-- `run_gold_pipeline()` - รันเมธอดสร้างตาราง Gold ทั้งหมด
+- `run_gold_pipeline()` - รันทุกเมธอดสร้างตาราง Gold
 
 **ลักษณะตาราง Gold**:
 - **โหมดการเขียน**: เสมอ `overwrite` (รีเฟรชแบบเต็ม)
 - **ความทันสมัยของข้อมูล**: สะท้อนสถานะล่าสุดของชั้น Silver
-- **ประสิทธิภาพ Query**: รวม Join และรวมกลุ่มไว้ล่วงหน้าเพื่อความเร็ว
-- **การใช้งาน**: Dashboard, รายงาน, การวิเคราะห์ Ad-hoc, Self-service BI
+- **ประสิทธิภาพ Query**: Join และรวมกลุ่มไว้ล่วงหน้าเพื่อความเร็ว
+- **การใช้งาน**: Dashboard, รายงาน, การวิเคราะห์ ad-hoc, self-service BI
 
 ---
 
@@ -249,7 +334,7 @@ Netflix_project/
 
 | คอลัมน์ | ชนิด | คำอธิบาย |
 |--------|------|---------|
-| `title_sk` | BIGINT | Surrogate key (primary key) |
+| `title_sk` | BIGINT | Surrogate key (สร้างอัตโนมัติ) |
 | `show_id` | STRING | Business key จากแหล่งข้อมูล |
 | `type` | STRING | ภาพยนตร์หรือซีรีส์ |
 | `title` | STRING | ชื่อเรื่อง |
@@ -269,37 +354,37 @@ Netflix_project/
 ### มิติย่อย
 
 **dim_cast_silver** (นักแสดง 36,399 คน):
-- `cast_sk`, `cast_name`
+- `cast_sk`, `cast_id`, `cast_name`
 
 **dim_directors_silver** (ผู้กำกับ 4,996 คน):
-- `director_sk`, `director_name`
+- `director_sk`, `director_id`, `director_name`
 
 **dim_countries_silver** (145 ประเทศ):
-- `country_sk`, `country_name`
+- `country_sk`, `country_id`, `country_name`
 
 **dim_categories_silver** (73 ประเภท):
-- `category_sk`, `category_name`
+- `category_sk`, `category_id`, `category_name`
 
 ### ตาราง Bridge (ความสัมพันธ์แบบ Many-to-Many)
 
 **bridge_title_cast_silver** (ความสัมพันธ์ 128,818 รายการ):
-- `title_sk`, `cast_sk`
+- `show_id`, `cast_id`
 
 **bridge_title_director_silver** (ความสัมพันธ์ 14,039 รายการ):
-- `title_sk`, `director_sk`
+- `show_id`, `director_id`
 
 **bridge_title_country_silver** (ความสัมพันธ์ 20,110 รายการ):
-- `title_sk`, `country_sk`
+- `show_id`, `country_id`
 
 **bridge_title_category_silver** (ความสัมพันธ์ 38,848 รายการ):
-- `title_sk`, `category_sk`
+- `show_id`, `category_id`
 
 ### ตารางตรวจสอบ: `netflix_bronze_bad_record`
 
 | คอลัมน์ | ชนิด | คำอธิบาย |
 |--------|------|---------|
 | คอลัมน์ต้นทางทั้งหมด | หลายชนิด | บันทึกต้นฉบับ |
-| `_reason` | ARRAY<STRING> | รายการความล้มเหลวในการตรวจสอบ |
+| `reason` | ARRAY<STRING> | รายการความล้มเหลวในการตรวจสอบ |
 | `batch_id` | INT | ตัวระบุ batch |
 | `load_dt` | DATE | วันที่ปฏิเสธ |
 | `load_dttm` | TIMESTAMP | เวลาที่ปฏิเสธ |
@@ -312,83 +397,62 @@ Netflix_project/
           dim_directors_silver                             dim_cast_silver
          ┌──────────────────────┐                         ┌──────────────────┐
          │ PK  │ director_sk    │                         │ PK  │ cast_sk    │
+         │     │ director_id    │                         │     │ cast_id    │
          │     │ director_name  │                         │     │ cast_name  │
          └──────────┬───────────┘                         └────────┬─────────┘
                     │ (1)                                          │ (1)
                     ▼                                              ▼
                     ∞ (Many)                                       ∞ (Many)
        [ ตารางสะพานเชื่อมสัมพันธ์ ]                       [ ตารางสะพานเชื่อมสัมพันธ์ ]
-         bridge_title_director                            bridge_title_cast
+          bridge_title_director                            bridge_title_cast
+          ┌──────────────────────┐                         ┌──────────────────┐
+          │ FK  │ show_id        │                         │ FK  │ show_id    │
+          │ FK  │ director_id    │                         │ FK  │ cast_id    │
+          └──────────┬───────────┘                         └────────┬─────────┘
+                     │                                              │
+                     │                                              │
+                     └───────────────┐              ┌───────────────┘
+                             ∞ (Many)│              │ ∞ (Many)
+                                     ▼              ▼
+                         ┌────────────────────────────────────────┐
+                         │            dim_titles_silver           │
+                         │        (ตารางมิติแกนกลางของหนัง)        │
+                         ├────────────────────────────────────────┤
+                         │ PK        │ title_sk                   │
+                         │ BK        │ show_id                    │
+                         │           │ type, title, date_added    │
+                         │           │ release_year, rating       │
+                         │           │ duration, description      │
+                         │ SCD       │ hash_key, hash_value       │
+                         │ Type 2    │ active_flag                │
+                         │           │ start_date, end_date       │
+                         └───────────┬───────────────┬────────────┘
+                     ∞ (Many)        │               │ ∞ (Many)
+                                     ▼               ▼
+       [ ตารางสะพานเชื่อมสัมพันธ์ ]                       [ ตารางสะพานเชื่อมสัมพันธ์ ]
+          bridge_title_country                              bridge_title_category
+          ┌──────────────────────┐                         ┌──────────────────┐
+          │ FK  │ show_id        │                         │ FK  │ show_id    │
+          │ FK  │ country_id     │                         │ FK  │ category_id│
+          └──────────┬───────────┘                         └────────┬─────────┘
+                     │                                              │
+                     │ (1)                                          │ (1)
+                     ▼                                              ▼
+       [ ตารางมิติย่อย: ประเทศ ]                        [ ตารางมิติย่อย: หมวดหมู่ ]
+          dim_countries_silver                             dim_categories_silver
          ┌──────────────────────┐                         ┌──────────────────┐
-         │ FK  │ title_sk       │                         │ FK  │ title_sk   │
-         │ FK  │ director_sk    │                         │ FK  │ cast_sk    │
-         └──────────┬───────────┘                         └────────┬─────────┘
-                    │                                              │
-                    │                                              │
-                    └───────────────┐              ┌───────────────┘
-                            ∞ (Many)│              │ ∞ (Many)
-                                    ▼              ▼
-                        ┌────────────────────────────────────────┐
-                        │            dim_titles_silver           │
-                        │        (ตารางมิติแกนกลางของหนัง)        │
-                        ├────────────────────────────────────────┤
-                        │ PK        │ title_sk                   │
-                        │           │ show_id                    │
-                        │           │ title                      │
-                        │           │ type                       │
-                        │           │ release_year               │
-                        │           │ rating                     │
-                        │           │ duration                   │
-                        │           │ description                │
-                        │           │ date_added                 │
-                        ├────────────────────────────────────────┤
-                        │ Hashing   │ hash_key                   │
-                        │           │ hash_value                 │
-                        ├────────────────────────────────────────┤
-                        │ SCD T2    │ active_flag                │
-                        │           │ start_date                 │
-                        │           │ end_date                   │
-                        ├────────────────────────────────────────┤
-                        │ Metadata  │ load_dt                    │
-                        │           │ load_dttm                  │
-                        └────────────────────────────────────────┘
-                                    ▲              ▲
-                            ∞ (Many)│              │ ∞ (Many)
-                    ┌───────────────┘              └───────────────┐
-                    │                                              │
-                    │                                              │
-         ┌──────────┴───────────┐                         ┌────────┴─────────┐
-         │ FK  │ title_sk       │                         │ FK  │ title_sk   │
-         │ FK  │ country_sk     │                         │ FK  │ category_sk│
-         └──────────────────────┘                         └──────────────────┘
-          bridge_title_country                             bridge_title_category
-                    ▲                                              ▲
-                    │ ∞ (Many)                                     │ ∞ (Many)
-                    │ (1)                                          │ (1)
-         ┌──────────┴───────────┐                         ┌────────┴─────────┐
          │ PK  │ country_sk     │                         │ PK  │ category_sk│
-         │     │ country_name   │                         │     │category_name│
-         └──────────────────────┘                         └──────────────────┘
-        [ ตารางมิติย่อย: ประเทศผลิต ]                    [ ตารางมิติย่อย: หมวดหมู่หนัง ]
-          dim_countries_silver                            dim_categories_silver
-
+         │     │ country_id     │                         │     │ category_id│
+         │     │ country_name   │                         │     │ category_nm│
+         └────────────────────────┘                        └──────────────────┘
 ```
 
 **คำอธิบายสัญลักษณ์**:
 - **PK** = Primary Key (คีย์หลัก)
 - **FK** = Foreign Key (คีย์นอก)
+- **BK** = Business Key (คีย์ทางธุรกิจ)
 - **(1)** = ด้านที่มีความสัมพันธ์แบบหนึ่ง
 - **∞ (Many)** = ด้านที่มีความสัมพันธ์แบบหลาย
-- **ตารางมิติหลัก** = ตารางข้อเท็จจริงกลางพร้อม SCD Type 2
-- **ตารางมิติย่อย** = ตารางข้อมูลหลัก/ตารางค้นหา
-- **ตารางสะพาน** = ตารางความสัมพันธ์แบบ many-to-many
-
-**อธิบายความสัมพันธ์** (Cardinality):
-- **ผู้กำกับหนึ่งคน** → **หลายเรื่อง** (ผ่าน bridge_title_director)
-- **นักแสดงหนึ่งคน** → **หลายเรื่อง** (ผ่าน bridge_title_cast)
-- **ประเทศหนึ่งประเทศ** → **หลายเรื่อง** (ผ่าน bridge_title_country)
-- **หมวดหมู่หนึ่งหมวด** → **หลายเรื่อง** (ผ่าน bridge_title_category)
-- แต่ละเรื่องสามารถมีหลายผู้กำกับ, หลายนักแสดง, หลายประเทศ, และหลายหมวดหมู่
 
 ---
 
@@ -396,16 +460,19 @@ Netflix_project/
 
 ### ข้อกำหนดเบื้องต้น
 
-- Databricks workspace (AWS/Azure/GCP)
-- เปิดใช้งาน Unity Catalog
-- Databricks Runtime 13.0+ หรือ MLR 13.0+
-- Python 3.10+
-- สิทธิ์เข้าถึง workspace catalog และ schema
+- Databricks workspace พร้อม Unity Catalog เปิดใช้งาน
+- สิทธิ์เข้าถึง S3 หรือ cloud storage (สำหรับ Auto Loader)
+- Python 3.10+ พร้อม PySpark
+- Delta Lake 2.0+
 
-### ขั้นตอนที่ 1: ตั้งค่าการกำหนดค่า
+### ขั้นตอนการตั้งค่า
+
+#### 1. สร้างตารางการตั้งค่า
 
 ```python
-# สร้างตารางการตั้งค่า
+# สร้าง schema และตารางการตั้งค่า
+spark.sql("CREATE SCHEMA IF NOT EXISTS workspace.netflix")
+
 spark.sql("""
 CREATE TABLE IF NOT EXISTS workspace.netflix.config_table (
     pipeline_name STRING,
@@ -419,626 +486,439 @@ CREATE TABLE IF NOT EXISTS workspace.netflix.config_table (
 )
 """)
 
-# เพิ่มการตั้งค่าไปป์ไลน์ Netflix
-config_data = [(
-    "netflix",
-    "/Volumes/main/default/netflix_data/*.csv",
-    True,
-    ",",
-    "workspace.netflix.netflix_bronze",
-    {"show_id": "string", "type": "string", ...},
-    ["show_id"],
-    "append"
-)]
-
-spark.createDataFrame(config_data, schema).write.mode("overwrite").saveAsTable("workspace.netflix.config_table")
+# ใส่การตั้งค่าไปป์ไลน์ Netflix
+spark.sql("""
+INSERT INTO workspace.netflix.config_table VALUES (
+    'netflix',
+    's3://your-bucket/netflix/',  -- หรือเส้นทางไฟล์
+    true,
+    ',',
+    'netflix',
+    map(
+        'show_id', 'string',
+        'type', 'string',
+        'title', 'string',
+        'director', 'string',
+        'cast', 'string',
+        'country', 'string',
+        'date_added', 'date',
+        'release_year', 'int',
+        'rating', 'string',
+        'duration', 'string',
+        'listed_in', 'string',
+        'description', 'string'
+    ),
+    array('show_id'),
+    'overwrite'
+)
+""")
 ```
 
-### ขั้นตอนที่ 2: เรียกใช้ชั้น Bronze
+#### 2. เรียกใช้ชั้น Bronze
 
 ```python
-from framework import BronzeLayer
+# ตัวเลือก A: โหมด Batch (โหลดครั้งเดียว)
+bronze = BronzeLayer.from_config_table("netflix")
+raw_df = bronze.read_from_file()
+bronze.load_to_bronze_table(raw_df)
 
-# เริ่มต้นจากการตั้งค่า
-b = BronzeLayer.from_config_table("netflix")
-
-# อ่านและโหลดข้อมูล
-bronze_df = b.read_from_file()
-b.load_to_bronze_table(bronze_df)
-
-# ตรวจสอบ
-spark.table("workspace.netflix.netflix_bronze").display()
+# ตัวเลือก B: โหมด Streaming (Auto Loader)
+bronze = BronzeLayer.from_config_table("netflix")
+bronze.s3_auto_loader(checkpoint_location="/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze/")
 ```
 
-### ขั้นตอนที่ 3: เรียกใช้ชั้น Silver
+#### 3. เรียกใช้ชั้น Silver
 
 ```python
-from framework import SilverLayer
-
-# เริ่มต้นจากการตั้งค่า
-s = SilverLayer.from_config_table("netflix")
-
-# ประมวลผลข้อมูลผ่านไปป์ไลน์คุณภาพ
-s.process_cdf_stream_to_silver(
-    checkpoint_location="/checkpoints/netflix_silver"
+silver = SilverLayer.from_config_table("netflix")
+silver.process_cdf_stream_to_silver(
+    checkpoint_location="/Volumes/workspace/netflix/checkpoint_dir/netflix_silver/"
 )
 ```
 
-### ขั้นตอนที่ 4: เรียกใช้ชั้น Gold
+#### 4. เรียกใช้ชั้น Gold
 
 ```python
-from framework import GoldLayer
-
-# เริ่มต้นจากการตั้งค่า
-g = GoldLayer.from_config_table("netflix")
-
-# สร้างตาราง Gold ทั้งหมด
-g.run_gold_pipeline()
-
-# ตรวจสอบตาราง Gold
-spark.table("workspace.netflix.netflix_content_by_cast_gold").display()
-spark.table("workspace.netflix.netflix_yearly_content_trends_gold").display()
+gold = GoldLayer.from_config_table("netflix")
+gold.run_gold_pipeline()
 ```
 
-### ขั้นตอนที่ 5: ตรวจสอบผลลัพธ์
+---
+
+## 🔧 การตั้งค่า
+
+### การตั้งค่า Auto Loader
 
 ```python
-# ตรวจสอบมิติหลัก
-spark.sql("""
-SELECT 
-    COUNT(*) as total_titles,
-    COUNT(CASE WHEN active_flag THEN 1 END) as active_titles,
-    COUNT(DISTINCT show_id) as unique_shows
-FROM workspace.netflix.dim_titles_silver
-""").display()
+# การตั้งค่า Auto Loader ของชั้น Bronze
+checkpoint_location = "/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze/"
+schema_location = "/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze_schema/"
 
-# ตรวจสอบคุณภาพข้อมูล
-spark.sql("""
-SELECT 
-    _reason,
-    COUNT(*) as count
-FROM workspace.netflix.netflix_bronze_bad_record
-GROUP BY _reason
-ORDER BY count DESC
-""").display()
+# ตัวเลือกสำคัญ:
+- cloudFiles.format: "csv"                          # รูปแบบไฟล์
+- cloudFiles.schemaEvolutionMode: "rescue"         # จัดการการเปลี่ยนแปลง schema
+- pathGlobFilter: "*.csv"                          # รูปแบบไฟล์
+- mergeSchema: "true"                              # อนุญาตการอัปเดต schema
+- trigger(availableNow=True)                       # Batch-style streaming สำหรับประหยัดต้นทุน
 ```
+
+### Trigger ของไปป์ไลน์
+
+**ชั้น Bronze**:
+- **Batch**: Trigger ด้วยตนเองผ่าน `load_to_bronze_table()`
+- **Streaming**: `trigger(availableNow=True)` - ประมวลผลข้อมูลที่มีทั้งหมดแล้วหยุด
+
+**ชั้น Silver**:
+- **แบบเพิ่มหน่วย**: CDF-based streaming พร้อม checkpoint
+- **Trigger**: `trigger(availableNow=True)` หรือ continuous streaming
+
+**ชั้น Gold**:
+- **Full Refresh**: Trigger ด้วยตนเองผ่าน `run_gold_pipeline()`
+- **โหมด**: `overwrite` - แทนที่ตารางทั้งหมด
 
 ---
 
 ## 🧪 ระบบทดสอบ
 
-### ภาพรวมชุดทดสอบ
+### ชุดทดสอบ: `SilverLayerTests`
 
-โปรเจคมีชุดทดสอบครอบคลุมใน `silver_layer_tests.py` พร้อม**การทดสอบอัตโนมัติ 5 ชุด**ครอบคลุมทุกด้านของไปป์ไลน์
+**การทดสอบครอบคลุม 5 แบบ**:
 
-### การเรียกใช้การทดสอบ
+1. **test_data_quality_validation()** - ตรวจสอบการตรวจสอบคุณภาพ 8 ขั้นตอน
+   - ✅ Trim, type casting, invalid detection, null keys, duplicates
+
+2. **test_star_schema_creation()** - ตรวจสอบโครงสร้าง 9 ตาราง
+   - ✅ 1 มิติหลัก + 4 มิติย่อย + 4 ตาราง bridge
+
+3. **test_scd_type2_change_detection()** - ทดสอบการติดตามประวัติ
+   - ✅ การอัปเดต active flag, start/end dates, hash-based CDC
+
+4. **test_bad_record_handling()** - ตรวจสอบโลจิกการกักกัน
+   - ✅ การติดตามเหตุผล, batch ID, rejection timestamp
+
+5. **test_incremental_processing()** - ทดสอบการผสานรวม CDF
+   - ✅ การจัดการ checkpoint, ประมวลผลเฉพาะบันทึกใหม่/เปลี่ยนแปลง
+
+### การรันการทดสอบ
 
 ```python
-from silver_layer_tests import SilverLayerTests
-
 # เริ่มต้นชุดทดสอบ
 tests = SilverLayerTests(
-    bronze_table="workspace.netflix.netflix_bronze",
-    silver_table="workspace.netflix.dim_titles_silver",
+    silver_obj=silver,
+    main_dim_table="workspace.netflix.dim_titles_silver",
+    sub_dim_tables=[
+        "workspace.netflix.dim_cast_silver",
+        "workspace.netflix.dim_directors_silver",
+        "workspace.netflix.dim_countries_silver",
+        "workspace.netflix.dim_categories_silver"
+    ],
+    bridge_tables=[
+        "workspace.netflix.bridge_title_cast_silver",
+        "workspace.netflix.bridge_title_director_silver",
+        "workspace.netflix.bridge_title_country_silver",
+        "workspace.netflix.bridge_title_category_silver"
+    ],
     bad_record_table="workspace.netflix.netflix_bronze_bad_record"
 )
 
-# เรียกใช้การทดสอบทั้งหมด
-results = tests.run_all_tests(skip_full_dataset=False)
-
-# เรียกใช้การทดสอบแยกรายการ
-tests.test_star_schema_integration()
-tests.test_complete_pipeline_real_data(batch_size=100)
+# รันการทดสอบทั้งหมด
+tests.test_data_quality_validation()
+tests.test_star_schema_creation()
 tests.test_scd_type2_change_detection()
-tests.test_full_dataset_performance()
-tests.test_idempotency()
+tests.test_bad_record_handling()
+tests.test_incremental_processing()
 ```
 
-### คำอธิบายการทดสอบ
-
-#### 1. **การทดสอบการรวม Star Schema**
-- **วัตถุประสงค์**: ตรวจสอบว่าทั้ง 9 ตารางมีอยู่และมีข้อมูล
-- **ตรวจสอบ**:
-  - การสร้าง hash key
-  - ตารางมิติหลัก
-  - ตารางมิติย่อย 4 ตาราง
-  - ตาราง bridge 4 ตาราง
-- **เกณฑ์ผ่าน**: ตารางทั้งหมดมีอยู่พร้อมจำนวนระเบียนที่คาดหวัง
-
-#### 2. **การทดสอบไปป์ไลน์ครบวงจร** (100 รายการ)
-- **วัตถุประสงค์**: การตรวจสอบไปป์ไลน์แบบครบวงจร
-- **ตรวจสอบ**:
-  - การโหลดข้อมูลจาก Bronze
-  - ไปป์ไลน์ตรวจสอบคุณภาพ
-  - แยกข้อมูลดี/ไม่ดี
-  - การโหลดตาราง Silver
-- **เกณฑ์ผ่าน**: ข้อมูลที่ถูกต้อง 100% ถูกโหลด, บันทึกข้อมูลไม่ถูกต้อง
-
-#### 3. **การทดสอบการตรวจจับการเปลี่ยนแปลง SCD Type 2**
-- **วัตถุประสงค์**: ตรวจสอบการติดตามประวัติการเปลี่ยนแปลง
-- **ตรวจสอบ**:
-  - การแทรกบันทึกเริ่มต้น
-  - การตรวจจับการเปลี่ยนแปลงผ่าน hash_value
-  - การปิดบันทึกประวัติ (end_date)
-  - การสร้างเวอร์ชันใหม่
-  - การจัดการ active_flag
-- **เกณฑ์ผ่าน**: เวอร์ชันเก่าปิด, เวอร์ชันใหม่ active, บันทึกที่ไม่เปลี่ยนแปลงไม่ถูกแก้ไข
-
-#### 4. **การทดสอบประสิทธิภาพชุดข้อมูลเต็ม** (17,618 รายการ)
-- **วัตถุประสงค์**: การตรวจสอบขนาด Production
-- **ตรวจสอบ**:
-  - การประมวลผลชุดข้อมูลเต็ม
-  - เมตริกประสิทธิภาพ
-  - การคำนวณ throughput
-- **เกณฑ์ผ่าน**: ประมวลผลข้อมูลทั้งหมดภายในเวลาที่ยอมรับได้ (<2 นาที)
-- **ผลลัพธ์**: **317.7 รายการต่อวินาที**, รวม 55.46 วินาที
-
-#### 5. **การทดสอบ Idempotency**
-- **วัตถุประสงค์**: ตรวจสอบความสามารถในการเรียกใช้ซ้ำอย่างปลอดภัย
-- **ตรวจสอบ**:
-  - จำนวนระเบียนก่อน/หลังการเรียกใช้ซ้ำ
-  - ไม่มีการสร้างข้อมูลซ้ำ
-  - จำนวน active_flag ที่สอดคล้อง
-- **เกณฑ์ผ่าน**: การประมวลผลข้อมูลเดิมซ้ำไม่สร้างระเบียนใหม่
-
-### สรุปผลการทดสอบ
-
-```
-================================================================================
-สรุปชุดทดสอบ
-================================================================================
-   การรวม Star Schema               : ✅ ผ่าน
-   ไปป์ไลน์ครบวงจร                  : ✅ ผ่าน
-   SCD Type 2                        : ✅ ผ่าน
-   ชุดข้อมูลเต็ม                    : ✅ ผ่าน
-   Idempotency                       : ✅ ผ่าน
-
-📊 ผลลัพธ์: ผ่าน 5/5, ล้มเหลว 0, ข้าม 0
-⏱️  เวลารวม: 184.88 วินาที (3.1 นาที)
-
-🎉 การทดสอบทั้งหมดผ่าน - ไปป์ไลน์พร้อมใช้งาน PRODUCTION!
-```
+**ผลลัพธ์ที่คาดหวัง**: ✅ การทดสอบทั้งหมด 5 แบบผ่าน (อัตราผ่าน 100%)
 
 ---
 
 ## 💡 ตัวอย่างการใช้งาน
 
-### ตัวอย่างที่ 1: Query ชื่อเรื่องที่ active
-
-```sql
-SELECT 
-    title,
-    type,
-    release_year,
-    rating
-FROM workspace.netflix.dim_titles_silver
-WHERE active_flag = true
-ORDER BY date_added DESC
-LIMIT 10
-```
-
-### ตัวอย่างที่ 2: วิเคราะห์เนื้อหาตามประเทศ
-
-```sql
-SELECT 
-    c.country_name,
-    COUNT(DISTINCT t.title_sk) as title_count,
-    SUM(CASE WHEN t.type = 'Movie' THEN 1 ELSE 0 END) as movies,
-    SUM(CASE WHEN t.type = 'TV Show' THEN 1 ELSE 0 END) as tv_shows
-FROM workspace.netflix.dim_titles_silver t
-JOIN workspace.netflix.bridge_title_country_silver b ON t.title_sk = b.title_sk
-JOIN workspace.netflix.dim_countries_silver c ON b.country_sk = c.country_sk
-WHERE t.active_flag = true
-GROUP BY c.country_name
-ORDER BY title_count DESC
-LIMIT 15
-```
-
-### ตัวอย่างที่ 3: นักแสดงยอดนิยมตามจำนวนเนื้อหา
-
-```sql
-SELECT 
-    a.cast_name,
-    COUNT(DISTINCT t.title_sk) as appearances,
-    COUNT(DISTINCT CASE WHEN t.type = 'Movie' THEN t.title_sk END) as movies,
-    COUNT(DISTINCT CASE WHEN t.type = 'TV Show' THEN t.title_sk END) as tv_shows
-FROM workspace.netflix.dim_cast_silver a
-JOIN workspace.netflix.bridge_title_cast_silver b ON a.cast_sk = b.cast_sk
-JOIN workspace.netflix.dim_titles_silver t ON b.title_sk = t.title_sk
-WHERE t.active_flag = true
-GROUP BY a.cast_name
-ORDER BY appearances DESC
-LIMIT 10
-```
-
-### ตัวอย่างที่ 4: ติดตามประวัติการเปลี่ยนแปลง (SCD Type 2)
-
-```sql
-SELECT 
-    show_id,
-    title,
-    rating,
-    active_flag,
-    start_date,
-    end_date,
-    CASE 
-        WHEN active_flag THEN 'ปัจจุบัน'
-        ELSE 'ประวัติ'
-    END as version_status
-FROM workspace.netflix.dim_titles_silver
-WHERE show_id = 's1'  -- แทนที่ด้วย show_id จริง
-ORDER BY start_date DESC
-```
-
-### ตัวอย่างที่ 5: แดชบอร์ดคุณภาพข้อมูล
-
-```sql
-SELECT 
-    DATE(load_dttm) as load_date,
-    explode(_reason) as failure_reason,
-    COUNT(*) as failure_count
-FROM workspace.netflix.netflix_bronze_bad_record
-GROUP BY DATE(load_dttm), explode(_reason)
-ORDER BY load_date DESC, failure_count DESC
-```
-
-### ตัวอย่างที่ 6: การใช้ SQL Query Helpers
+### ตัวอย่าง 1: การตั้งค่าไปป์ไลน์เริ่มต้น
 
 ```python
-from silver_layer_tests import StarSchemaQueries
+from dataclasses import dataclass
+from pyspark.sql.functions import *
 
-# Query การวิเคราะห์ด่วน
-StarSchemaQueries.query_overview(spark)
-StarSchemaQueries.query_top_actors(spark, limit=10)
-StarSchemaQueries.query_content_by_country(spark, limit=15)
-StarSchemaQueries.query_genre_analysis(spark, limit=15)
-StarSchemaQueries.query_multidimensional_analysis(spark, limit=10)
-StarSchemaQueries.query_scd_history(spark)
+# 1. รันชั้น Bronze (Auto Loader)
+bronze = BronzeLayer.from_config_table("netflix")
+bronze.s3_auto_loader()
+
+# 2. รันชั้น Silver (คุณภาพ + Star Schema)
+silver = SilverLayer.from_config_table("netflix")
+silver.process_cdf_stream_to_silver()
+
+# 3. รันชั้น Gold (การรวมกลุ่มทางธุรกิจ)
+gold = GoldLayer.from_config_table("netflix")
+gold.run_gold_pipeline()
+
+# 4. ตรวจสอบผลลัพธ์
+spark.table("workspace.netflix.dim_titles_silver").display()
+spark.table("workspace.netflix.netflix_content_by_cast_gold").display()
 ```
 
-### ตัวอย่างที่ 7: ชั้น Gold - การวิเคราะห์เนื้อหาตามนักแสดง (เร็ว!)
+### ตัวอย่าง 2: Query Star Schema
 
-```sql
--- รวม Join และ Denormalized ไว้แล้ว - ไม่ต้อง Join ซับซ้อน!
-SELECT 
-    cast_name,
-    COUNT(DISTINCT show_id) as total_titles,
-    COUNT(DISTINCT CASE WHEN type = 'Movie' THEN show_id END) as movies,
-    COUNT(DISTINCT CASE WHEN type = 'TV Show' THEN show_id END) as tv_shows
-FROM workspace.netflix.netflix_content_by_cast_gold
-GROUP BY cast_name
-ORDER BY total_titles DESC
-LIMIT 10
+```python
+# ดึงเรื่องทั้งหมดพร้อมนักแสดง
+spark.sql("""
+    SELECT 
+        t.title,
+        t.type,
+        t.release_year,
+        c.cast_name
+    FROM workspace.netflix.dim_titles_silver t
+    INNER JOIN workspace.netflix.bridge_title_cast_silver b 
+        ON t.show_id = b.show_id
+    INNER JOIN workspace.netflix.dim_cast_silver c 
+        ON b.cast_id = c.cast_id
+    WHERE t.active_flag = TRUE
+    ORDER BY t.release_year DESC
+    LIMIT 100
+""").display()
 ```
 
-### ตัวอย่างที่ 8: ชั้น Gold - แนวโน้มเนื้อหารายปี
+### ตัวอย่าง 3: ติดตามคุณภาพข้อมูล
 
-```sql
--- เมตริกที่รวมกลุ่มไว้ล่วงหน้า - ผลลัพธ์ทันที!
-SELECT 
-    release_year,
-    SUM(CASE WHEN type = 'Movie' THEN total_title ELSE 0 END) as movies,
-    SUM(CASE WHEN type = 'TV Show' THEN total_title ELSE 0 END) as tv_shows,
-    SUM(total_title) as total_content
-FROM workspace.netflix.netflix_yearly_content_trends_gold
-WHERE release_year >= 2015
-GROUP BY release_year
-ORDER BY release_year DESC
+```python
+# ตรวจสอบสถิติข้อมูลไม่ถูกต้อง
+spark.sql("""
+    SELECT 
+        batch_id,
+        load_dt,
+        COUNT(*) as bad_record_count,
+        explode(reason) as failure_reason
+    FROM workspace.netflix.netflix_bronze_bad_record
+    GROUP BY batch_id, load_dt, reason
+    ORDER BY batch_id DESC
+""").display()
 ```
 
-### ตัวอย่างที่ 9: ชั้น Gold - เครือข่ายความร่วมมือของนักแสดง
+### ตัวอย่าง 4: วิเคราะห์แนวโน้มทางธุรกิจ
 
-```sql
--- ค้นหานักแสดงที่มักร่วมงานด้วยกัน
-SELECT 
-    a.cast_name as actor1,
-    b.cast_name as actor2,
-    COUNT(DISTINCT a.show_id) as collaborations
-FROM workspace.netflix.netflix_content_by_cast_gold a
-JOIN workspace.netflix.netflix_content_by_cast_gold b
-    ON a.show_id = b.show_id 
-    AND a.cast_id < b.cast_id  -- หลีกเลี่ยงข้อมูลซ้ำ
-GROUP BY actor1, actor2
-HAVING COUNT(DISTINCT a.show_id) >= 3
-ORDER BY collaborations DESC
-LIMIT 20
-```
-
-### ตัวอย่างที่ 10: ชั้น Gold - แนวโน้มอัตราส่วนภาพยนตร์ต่อซีรีส์
-
-```sql
--- วิเคราะห์การเปลี่ยนแปลงกลยุทธ์เนื้อหาตามเวลา
-SELECT 
-    release_year,
-    MAX(CASE WHEN type = 'Movie' THEN total_title END) as movie_count,
-    MAX(CASE WHEN type = 'TV Show' THEN total_title END) as tv_count,
-    ROUND(
-        MAX(CASE WHEN type = 'Movie' THEN total_title END) * 100.0 / 
-        NULLIF(MAX(CASE WHEN type = 'TV Show' THEN total_title END), 0),
-        2
-    ) as movie_to_tv_ratio_pct
-FROM workspace.netflix.netflix_yearly_content_trends_gold
-WHERE release_year >= 2010
-GROUP BY release_year
-ORDER BY release_year DESC
+```python
+# Query ชั้น Gold สำหรับแนวโน้มเนื้อหารายปี
+spark.sql("""
+    SELECT 
+        release_year,
+        type,
+        total_title,
+        LAG(total_title, 1) OVER (PARTITION BY type ORDER BY release_year) as prev_year_count,
+        (total_title - LAG(total_title, 1) OVER (PARTITION BY type ORDER BY release_year)) as yoy_change
+    FROM workspace.netflix.netflix_yearly_content_trends_gold
+    WHERE release_year >= 2015
+    ORDER BY release_year DESC, type
+""").display()
 ```
 
 ---
 
 ## 📈 ประสิทธิภาพ
 
-### มาตรฐาน Production
+### ประสิทธิภาพไปป์ไลน์
 
-**สภาพแวดล้อมการทดสอบ**:
-- แพลตฟอร์ม: Databricks Serverless (AWS)
-- ชุดข้อมูล: 17,618 รายการ
-- ไปป์ไลน์: Bronze → Silver (การแปลงเต็มรูปแบบ)
+| เมตริก | ค่า | หมายเหตุ |
+|--------|-----|----------|
+| **การรับข้อมูล Bronze** | 317+ บันทึก/วินาที | Auto Loader ด้วย trigger `availableNow` |
+| **การแปลง Silver** | ไปป์ไลน์ 8 ขั้นตอน | เสร็จสมบูรณ์ใน 45-60 วินาทีสำหรับ 17K แถว |
+| **การรวมกลุ่ม Gold** | ต่ำกว่า 5 วินาที | โหมด full refresh overwrite |
+| **ตารางทั้งหมดที่สร้าง** | 14 ตาราง | 1 Bronze + 10 Silver + 2 Gold + 1 Audit |
+| **ขนาด Star Schema** | 9 ตาราง | 1 หลัก + 4 มิติย่อย + 4 bridges |
 
-**ผลลัพธ์**:
+### เมตริกคุณภาพข้อมูล
 
-| เมตริก | ค่า |
-|--------|-----|
-| **เวลาประมวลผลรวม** | 55.46 วินาที |
-| **Throughput** | 317.7 รายการต่อวินาที |
-| **เฉลี่ยต่อรายการ** | 3.15 มิลลิวินาที |
-| **อัตราผ่านคุณภาพข้อมูล** | 50.0% (8,809 ถูกต้อง) |
-| **ตรวจพบข้อมูลไม่ถูกต้อง** | 50.0% (8,809 ไม่ถูกต้อง) |
-| **ตารางที่สร้าง** | 9 ตาราง |
-| **ความสัมพันธ์ที่สร้าง** | 201,815 รวม |
+| ขั้นตอน | บันทึกที่ประมวลผล | บันทึกไม่ถูกต้อง | อัตราผ่าน |
+|---------|-------------------|-----------------|----------|
+| Trim & Cast | 17,039 | 31 | 99.82% |
+| การตรวจจับค่าไม่ถูกต้อง | 17,008 | 0 | 100% |
+| การตรวจจับ Null Key | 17,008 | 0 | 100% |
+| การตรวจจับข้อมูลซ้ำ | 17,008 | 1,030 | 93.95% |
+| **บันทึกสะอาดสุดท้าย** | **15,978** | **1,061** | **93.77%** |
 
-**ความสามารถในการขยายขนาด**:
-- ✅ จัดการข้อมูล 17K+ รายการใน <1 นาที
-- ✅ Idempotent (เรียกใช้ซ้ำได้อย่างปลอดภัย)
-- ✅ การประมวลผลแบบเพิ่มหน่วยผ่าน CDF
-- ✅ เหมาะสำหรับงาน batch รายชั่วโมง/รายวัน
+### การติดตาม SCD Type 2
 
-### การกระจายข้อมูล
-
-**การเติมข้อมูล Star Schema**:
-
-| ตาราง | จำนวนรายการ | คำอธิบาย |
-|-------|------------|---------|
-| dim_titles_silver | 8,817 | มิติหลัก (8,816 active) |
-| dim_cast_silver | 36,399 | นักแสดงที่ไม่ซ้ำ |
-| dim_directors_silver | 4,996 | ผู้กำกับที่ไม่ซ้ำ |
-| dim_countries_silver | 145 | ประเทศ |
-| dim_categories_silver | 73 | ประเภท |
-| bridge_title_cast_silver | 128,818 | ความสัมพันธ์ชื่อเรื่อง-นักแสดง |
-| bridge_title_director_silver | 14,039 | ความสัมพันธ์ชื่อเรื่อง-ผู้กำกับ |
-| bridge_title_country_silver | 20,110 | ความสัมพันธ์ชื่อเรื่อง-ประเทศ |
-| bridge_title_category_silver | 38,848 | ความสัมพันธ์ชื่อเรื่อง-ประเภท |
-
-**ความสัมพันธ์รวม**: 201,815 รายการในตาราง bridge
+- **การโหลดเริ่มต้น**: 15,978 บันทึก active
+- **การตรวจจับการเปลี่ยนแปลง**: การเปรียบเทียบ Hash แบบ SHA-256
+- **บันทึกประวัติ**: เก็บรักษาด้วย `end_date` และ `active_flag = False`
+- **ประสิทธิภาพ Query**: เพิ่มประสิทธิภาพด้วยตัวกรอง `active_flag = True`
 
 ---
 
-## ✅ แนวทางปฏิบัติที่ดี
+## 🎓 แนวทางปฏิบัติที่ดี
 
-### 1. คุณภาพข้อมูล
+### 1. การจัดการการตั้งค่า
 
-✅ **ตรวจสอบข้อมูลไม่ถูกต้องเสมอ**:
-```python
-spark.sql("""
-SELECT _reason, COUNT(*) 
-FROM workspace.netflix.netflix_bronze_bad_record 
-GROUP BY _reason
-""").display()
-```
+✅ **รวมศูนย์การตั้งค่า** ใน `config_table`  
+✅ **ใช้ factory methods** (`from_config_table()`) เพื่อความสอดคล้อง  
+✅ **ควบคุมเวอร์ชัน** การเปลี่ยนแปลงการตั้งค่า  
+✅ **เอกสาร schema mappings** ใน data dictionaries  
 
-✅ **ติดตามแนวโน้มคุณภาพ**:
-```python
-spark.sql("""
-SELECT 
-    load_dt,
-    COUNT(*) as total_processed,
-    SUM(CASE WHEN _reason IS NULL THEN 1 ELSE 0 END) as good_records,
-    SUM(CASE WHEN _reason IS NOT NULL THEN 1 ELSE 0 END) as bad_records
-FROM (
-    SELECT load_dt, NULL as _reason FROM workspace.netflix.dim_titles_silver
-    UNION ALL
-    SELECT load_dt, _reason FROM workspace.netflix.netflix_bronze_bad_record
-)
-GROUP BY load_dt
-ORDER BY load_dt DESC
-""").display()
-```
+### 2. คุณภาพข้อมูล
 
-### 2. การเพิ่มประสิทธิภาพ
+✅ **กักกันข้อมูลไม่ถูกต้อง** - ไม่ทิ้งอย่างเงียบๆ  
+✅ **ติดตามเหตุผลการปฏิเสธ** พร้อมบันทึกตรวจสอบโดยละเอียด  
+✅ **ติดตามแนวโน้มบันทึกไม่ถูกต้อง** ตามเวลา  
+✅ **แจ้งเตือนเมื่อละเมิดเกณฑ์คุณภาพ**  
 
-✅ **ใช้การประมวลผลแบบเพิ่มหน่วย**:
-- เปิดใช้งาน CDF บนตาราง Bronze
-- ใช้ checkpoint สำหรับ streaming
-- ประมวลผลเฉพาะข้อมูลที่เปลี่ยนแปลง
+### 3. การประมวลผลแบบเพิ่มหน่วย
 
-✅ **แบ่งพาร์ติชันตารางขนาดใหญ่**:
-```sql
-ALTER TABLE workspace.netflix.netflix_bronze 
-PARTITION BY (DATE(_load_dt))
-```
+✅ **เปิดใช้งาน CDF** ในตาราง Bronze ทั้งหมด  
+✅ **ใช้ checkpoints** สำหรับ streaming fault tolerance  
+✅ **ชอบ `trigger(availableNow=True)`** สำหรับ batch streaming ที่ประหยัดต้นทุน  
+✅ **ติดตาม checkpoint lag** เพื่อตรวจจับความล่าช้าของไปป์ไลน์  
 
-✅ **เพิ่มประสิทธิภาพการ join**:
-- ใช้ broadcast join สำหรับตารางมิติขนาดเล็ก
-- กรองก่อนการ join
-- ใช้ตารางที่ cache สำหรับ query ซ้ำ
+### 4. การจัดการ SCD Type 2
 
-### 3. การกำกับดูแลข้อมูล
+✅ **query ด้วย `active_flag = TRUE` เสมอ** สำหรับสถานะปัจจุบัน  
+✅ **ใช้การเปรียบเทียบ hash** สำหรับการตรวจจับการเปลี่ยนแปลงที่มีประสิทธิภาพ  
+✅ **เก็บบันทึกประวัติ** สำหรับการตรวจสอบและ query ย้อนเวลา  
+✅ **จัดทำดัชนีบน surrogate keys** สำหรับประสิทธิภาพ join  
 
-✅ **บันทึกการเปลี่ยนแปลง schema**:
-- อัปเดต config_table เมื่อ schema ต้นทางเปลี่ยน
-- ควบคุมเวอร์ชันของโค้ดไปป์ไลน์
-- รักษาบันทึกตรวจสอบใน Bronze
+### 5. การเพิ่มประสิทธิภาพชั้น Gold
 
-✅ **ตั้งนโยบายการเก็บรักษา**:
-```sql
-ALTER TABLE workspace.netflix.netflix_bronze
-SET TBLPROPERTIES (
-    'delta.logRetentionDuration' = '90 days',
-    'delta.deletedFileRetentionDuration' = '90 days'
-)
-```
+✅ **รวมกลุ่มล่วงหน้า** เมตริกทางธุรกิจทั่วไป  
+✅ **Denormalize** สำหรับประสิทธิภาพ query ของ dashboard  
+✅ **กรองสำหรับบันทึก active เท่านั้น** ในการรวมกลุ่ม  
+✅ **ใช้ full refresh** (`overwrite`) เพื่อความเรียบง่าย  
+✅ **แบ่ง Partition** ตาราง Gold ขนาดใหญ่ตามวันที่หรือมิติหลัก  
 
-✅ **ใช้การควบคุมการเข้าถึง**:
-```sql
-GRANT SELECT ON TABLE workspace.netflix.dim_titles_silver TO `analysts`
-GRANT SELECT ON TABLE workspace.netflix.netflix_bronze TO `data_engineers`
-```
+### 6. การปรับใช้ Production
 
-### 4. การติดตามและแจ้งเตือน
-
-✅ **ติดตามสุขภาพไปป์ไลน์**:
-- ติดตามเวลาประมวลผล batch
-- แจ้งเตือนเมื่อการตรวจสอบคุณภาพล้มเหลว
-- ติดตามจำนวนข้อมูลไม่ถูกต้อง
-- ติดตามอัตราการเติบโตของตาราง
-
-✅ **ตั้งค่าแดชบอร์ด**:
-- ความสดของข้อมูล (timestamp การโหลดล่าสุด)
-- เมตริกคุณภาพ (อัตราดี/ไม่ดี)
-- การเปลี่ยนแปลง schema
-- แนวโน้มประสิทธิภาพ
-
-### 5. การทดสอบ
-
-✅ **เรียกใช้การทดสอบก่อนนำไปใช้งาน production**:
-```python
-# เรียกใช้ชุดทดสอบเต็มเสมอ
-results = tests.run_all_tests(skip_full_dataset=False)
-assert results['failed'] == 0, "การทดสอบต้องผ่านก่อนนำไปใช้งาน"
-```
-
-✅ **ทดสอบด้วยปริมาณข้อมูลเหมือน production**  
-✅ **ตรวจสอบพฤติกรรม SCD Type 2**  
-✅ **ยืนยัน idempotency**  
+✅ **จัดตารางไปป์ไลน์** ตามลำดับ (Bronze → Silver → Gold)  
+✅ **ใช้การแจ้งเตือน** สำหรับความล้มเหลวของไปป์ไลน์  
+✅ **ติดตามเมตริกประสิทธิภาพ** (throughput, latency)  
+✅ **ตั้งค่าการติดตาม data lineage**  
+✅ **เอกสารการพึ่งพาตาราง** และตารางการรีเฟรช  
 
 ---
 
-## 🔧 การแก้ไขปัญหา
+## 🐛 การแก้ไขปัญหา
 
-### ปัญหาที่พบบ่อย
+### ปัญหาทั่วไป
 
-#### ปัญหาที่ 1: ข้อผิดพลาด Schema ไม่ตรงกัน
+#### ปัญหา 1: Auto Loader ไม่ตรวจจับไฟล์ใหม่
 
-**อาการ**: `AnalysisException: cannot resolve column`
+**อาการ**: ไฟล์ใหม่ในโฟลเดอร์ S3 ไม่ถูกประมวลผล
 
 **สาเหตุ**:
-- คอลัมน์ CSV ต้นทางเปลี่ยน
-- schema_detail ของ config table ล้าสมัย
-- คอลัมน์หายในข้อมูลต้นทาง
+- Checkpoint location ประมวลผลไฟล์เหล่านั้นแล้ว
+- `pathGlobFilter` ไม่ตรงกับรูปแบบไฟล์
+- โหมด Schema evolution ไม่เข้ากันกับคอลัมน์ใหม่
 
 **แก้ไข**:
 ```python
-# 1. ตรวจสอบ schema ต้นทาง
-df = spark.read.option("header", True).csv("/path/to/file.csv")
-df.printSchema()
+# ตัวเลือก A: รีเซ็ต checkpoint (ระวัง: ประมวลผลไฟล์ทั้งหมดใหม่)
+dbutils.fs.rm("/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze/", recurse=True)
 
-# 2. อัปเดต config_table
-spark.sql("""
-UPDATE workspace.netflix.config_table
-SET schema_detail = map(
-    'show_id', 'string',
-    'new_column', 'string',
-    ...
-)
-WHERE pipeline_name = 'netflix'
-""")
-
-# 3. สร้างตาราง Bronze ใหม่ถ้าจำเป็น
-spark.sql("DROP TABLE IF EXISTS workspace.netflix.netflix_bronze")
+# ตัวเลือก B: ตรวจสอบรูปแบบไฟล์
+bronze = BronzeLayer.from_config_table("netflix")
+bronze.s3_auto_loader(checkpoint_location="<new_checkpoint_path>")
 ```
 
-#### ปัญหาที่ 2: ข้อมูลซ้ำ
+#### ปัญหา 2: SCD Type 2 ไม่สร้างเวอร์ชันใหม่
 
-**อาการ**: ข้อมูลไม่ถูกต้องที่มีเหตุผล `_key_duplicate`
+**อาการ**: การเปลี่ยนแปลงไม่ปรากฏเป็นบันทึกใหม่ด้วย `active_flag = TRUE`
 
 **สาเหตุ**:
-- show_id เดียวกันแต่ข้อมูลต่างกัน
-- ปัญหาคุณภาพข้อมูลต้นทาง
+- ค่า Hash ไม่เปลี่ยนแปลง (คอลัมน์ไม่รวมใน hash)
+- `load_main_dimension()` ไม่ทำงานหลังการเปลี่ยนแปลงข้อมูล
+- Business key ไม่ตรงกันใน join logic
 
 **แก้ไข**:
 ```python
-# ตรวจสอบข้อมูลซ้ำ
+# ตรวจสอบการสร้าง hash รวมคอลัมน์ข้อมูลทั้งหมด
+silver = SilverLayer.from_config_table("netflix")
+
+# ตรวจสอบคอลัมน์ที่รวมใน hash_value
+# ควรยกเว้น: keys, exploded columns (cast, director, country, listed_in), _sk
+hash_columns = [col for col in silver.data_col 
+                if col not in silver.keys and col not in ["cast", "director", "country", "listed_in"]]
+print("คอลัมน์ใน hash_value:", hash_columns)
+
+# รันชั้น Silver ใหม่
+silver.process_cdf_stream_to_silver()
+```
+
+#### ปัญหา 3: ข้อมูลไม่ถูกต้องไม่ถูกจับ
+
+**อาการ**: ข้อมูลไม่ถูกต้องปรากฏในชั้น Silver
+
+**สาเหตุ**:
+- ขั้นตอนการตรวจสอบคุณภาพถูกข้าม
+- กฎการตรวจสอบไม่ตรงกับรูปแบบข้อมูล
+- ตารางบันทึกไม่ถูกต้องไม่เริ่มต้น
+
+**แก้ไข**:
+```python
+# ตรวจสอบตารางบันทึกไม่ถูกต้องมีอยู่
+spark.sql("SELECT * FROM workspace.netflix.netflix_bronze_bad_record LIMIT 10").display()
+
+# ตรวจสอบกฎการตรวจสอบ
+silver = SilverLayer.from_config_table("netflix")
+print("กฎค่าไม่ถูกต้อง:", silver.invalid_rule)
+
+# รันการตรวจสอบคุณภาพด้วยตนเองในตัวอย่าง
+from pyspark.sql.functions import col
+bronze_df = spark.table("workspace.netflix.netflix_bronze")
+invalid_df = silver.get_invalid_record(bronze_df)
+invalid_df.display()
+```
+
+#### ปัญหา 4: ข้อผิดพลาด Spark Connect Serverless (SPARK-55448)
+
+**อาการ**: ข้อผิดพลาด `STATE_CONSISTENCY` หรือ `XXSC0` ระหว่าง Auto Loader
+
+**สาเหตุ**: บั๊ก synchronization ที่รู้จักของ Spark Connect
+
+**แก้ไข**:
+```python
+# จัดการแล้วใน BronzeLayer.s3_auto_loader()
+# ข้อผิดพลาดถูกจับและถือว่าสำเร็จ
+# ตรวจสอบข้อมูลโหลดสำเร็จ:
+spark.table("workspace.netflix.netflix_bronze").count()
+```
+
+#### ปัญหา 5: ชั้น Gold ขาดบันทึก
+
+**อาการ**: ตาราง Gold มีบันทึกน้อยกว่าที่คาดหวัง
+
+**สาเหตุ**:
+- การกรองสำหรับ `active_flag = TRUE` ยกเว้นบันทึกประวัติ
+- Bridge table joins ขาดความสัมพันธ์บางอย่าง
+- ข้อมูลยังไม่แพร่กระจายจากชั้น Silver
+
+**แก้ไข**:
+```python
+# ตรวจสอบบันทึก active กับ inactive ใน Silver
 spark.sql("""
-SELECT show_id, COUNT(*) as dup_count
-FROM workspace.netflix.netflix_bronze
-GROUP BY show_id
-HAVING dup_count > 1
+    SELECT 
+        active_flag,
+        COUNT(*) as record_count
+    FROM workspace.netflix.dim_titles_silver
+    GROUP BY active_flag
 """).display()
 
-# ตรวจสอบข้อมูลไม่ถูกต้อง
-spark.sql("""
-SELECT *
-FROM workspace.netflix.netflix_bronze_bad_record
-WHERE array_contains(_reason, '_key_duplicate')
-""").display()
+# ตรวจสอบชั้น Gold สร้างใหม่หลังการอัปเดต Silver
+gold = GoldLayer.from_config_table("netflix")
+gold.run_gold_pipeline()
 ```
 
-#### ปัญหาที่ 3: SCD Type 2 ไม่ปิดข้อมูลเก่า
+#### ปัญหา 6: การทดสอบล้มเหลว
 
-**อาการ**: มีหลายรายการ active สำหรับ show_id เดียวกัน
+**อาการ**: การทดสอบ SCD Type 2 ล้มเหลวด้วย "ข้อมูลทดสอบยังคงมีอยู่"
 
-**สาเหตุ**:
-- การคำนวณ Hash ไม่สอดคล้อง
-- คอลัมน์ hash_key หรือ hash_value หายไป
+**สาเหตุ**: การรันการทดสอบก่อนหน้าทิ้งบันทึกทดสอบในตาราง Silver
 
 **แก้ไข**:
 ```python
-# ตรวจสอบเวอร์ชัน active หลายรายการ
-spark.sql("""
-SELECT show_id, COUNT(*) as active_count
-FROM workspace.netflix.dim_titles_silver
-WHERE active_flag = true
-GROUP BY show_id
-HAVING active_count > 1
-""").display()
-
-# ตรวจสอบการสร้าง hash
-from framework import SilverLayer
-s = SilverLayer.from_config_table("netflix")
-test_df = spark.table("workspace.netflix.netflix_bronze").limit(5)
-hash_df = s.get_hash_key_value(test_df)
-hash_df.select("show_id", "hash_key", "hash_value").display()
-```
-
-#### ปัญหาที่ 4: ประสิทธิภาพลดลง
-
-**อาการ**: การประมวลผลใช้เวลานานกว่าที่คาดหวัง
-
-**สาเหตุ**:
-- ตารางไม่ได้เพิ่มประสิทธิภาพ
-- สแกนตารางเต็มแทนการประมวลผลแบบเพิ่มหน่วย
-- ขาด CDF checkpoint
-
-**แก้ไข**:
-```sql
--- เพิ่มประสิทธิภาพตาราง Delta
-OPTIMIZE workspace.netflix.netflix_bronze;
-OPTIMIZE workspace.netflix.dim_titles_silver;
-
--- ตรวจสอบสถิติตาราง
-DESCRIBE DETAIL workspace.netflix.netflix_bronze;
-
--- วิเคราะห์แผน query
-EXPLAIN EXTENDED
-SELECT * FROM workspace.netflix.dim_titles_silver WHERE active_flag = true;
-```
-
-#### ปัญหาที่ 5: การทดสอบล้มเหลว
-
-**อาการ**: การทดสอบ SCD Type 2 ล้มเหลว
-
-**สาเหตุ**:
-- ข้อมูลทดสอบเก่ายังคงอยู่
-- Schema ไม่ตรงกันในข้อมูลทดสอบ
-
-**แก้ไข**:
-```python
-# ล้างข้อมูลทดสอบเก่า
+# ล้างบันทึกทดสอบเก่า
 spark.sql("""
 DELETE FROM workspace.netflix.dim_titles_silver 
 WHERE show_id LIKE 'TEST_SCD_%'
 """)
 
-# เรียกใช้การทดสอบอีกครั้ง
+# รันการทดสอบใหม่
 tests = SilverLayerTests(...)
 tests.test_scd_type2_change_detection()
 ```
@@ -1047,27 +927,28 @@ tests.test_scd_type2_change_detection()
 
 ## 🤝 การมีส่วนร่วม
 
-### ขั้นตอนการพัฒนา
+### เวิร์กโฟลว์การพัฒนา
 
 1. **Fork notebook** หรือสร้างเวอร์ชันใหม่
-2. **ทำการเปลี่ยนแปลง**ในสภาพแวดล้อมการพัฒนาของคุณ
-3. **เรียกใช้ชุดทดสอบเต็ม**เพื่อตรวจสอบการเปลี่ยนแปลง
-4. **อัปเดตเอกสาร**หากเพิ่มฟีเจอร์ใหม่
+2. **ทำการเปลี่ยนแปลง** ในสภาพแวดล้อมการพัฒนาของคุณ
+3. **รันชุดทดสอบเต็ม** เพื่อตรวจสอบการเปลี่ยนแปลง
+4. **อัปเดตเอกสาร** หากเพิ่มฟีเจอร์ใหม่
 5. **ส่งเพื่อตรวจสอบ** (หากเป็นโปรเจคร่วมกัน)
 
 ### มาตรฐานโค้ด
 
-✅ ใช้แนวทาง PEP 8  
-✅ เพิ่ม docstring ในทุก method  
-✅ รวมการทดสอบสำหรับฟีเจอร์ใหม่  
+✅ ใช้แนวทาง PEP 8 style  
+✅ เพิ่ม docstrings ในทุกเมธอด  
+✅ รวม unit tests สำหรับฟีเจอร์ใหม่  
 ✅ อัปเดต README สำหรับการเปลี่ยนแปลงที่สำคัญ  
 ✅ ใช้ type hints ที่เหมาะสม  
+✅ ปฏิบัติตามรูปแบบ dataclass สำหรับการตั้งค่า  
 
 ### ข้อกำหนดการทดสอบ
 
-- การทดสอบทั้ง 5 ชุดต้องผ่าน
+- การทดสอบทั้งหมด 5 แบบต้องผ่าน
 - ไม่มีการทำลาย schema ในชั้น Silver
-- รักษามาตรฐานประสิทธิภาพ
+- รักษาเกณฑ์มาตรฐานประสิทธิภาพ
 - รักษาความเข้ากันได้แบบย้อนหลัง
 
 ---
@@ -1077,55 +958,60 @@ tests.test_scd_type2_change_detection()
 ### เอกสาร
 
 - [Databricks Medallion Architecture](https://www.databricks.com/glossary/medallion-architecture)
+- [Databricks Auto Loader](https://docs.databricks.com/ingestion/auto-loader/index.html)
 - [Delta Lake Documentation](https://docs.delta.io/)
 - [Change Data Feed Guide](https://docs.databricks.com/delta/delta-change-data-feed.html)
 - [SCD Type 2 Best Practices](https://www.databricks.com/blog/2022/08/22/dimensional-modeling-delta-lake.html)
 
-### Notebook ที่เกี่ยวข้อง
+### Notebooks ที่เกี่ยวข้อง
 
-- `framework.ipynb` - การใช้งานไปป์ไลน์หลัก
+- `framework.ipynb` - การใช้งานไปป์ไลน์หลัก (BronzeLayer, SilverLayer, GoldLayer)
 - `silver_layer_tests.py` - ชุดทดสอบครอบคลุม
 
 ### การสนับสนุน
 
 สำหรับคำถามหรือปัญหา:
-1. ตรวจสอบส่วนการแก้ไขปัญหาด้านบน
+1. ตรวจสอบส่วนการแก้ไขปัญหาข้างต้น
 2. ตรวจสอบผลการทดสอบสำหรับรายละเอียดข้อผิดพลาด
-3. ตรวจสอบตารางข้อมูลไม่ถูกต้องสำหรับปัญหาคุณภาพข้อมูล
-4. ศึกษาเอกสาร Databricks
+3. ตรวจสอบตารางบันทึกไม่ถูกต้องสำหรับปัญหาคุณภาพข้อมูล
+4. ปรึกษาเอกสาร Databricks
 
 ---
 
-## 📝 สิทธิ์การใช้งาน
+## 📝 ใบอนุญาต
 
-โปรเจคนี้เป็นส่วนหนึ่งของโปรแกรมฝึกอบรม**Databricks for Data Engineers Bootcamp**
+โปรเจคนี้เป็นส่วนหนึ่งของโปรแกรมการฝึกอบรม **Databricks for Data Engineers Bootcamp**
 
 ---
 
-## 🎉 กิตติกรรมประกาศ
+## 🎉 การรับรอง
 
 **สร้างด้วย**:
 - Databricks Unified Analytics Platform
 - Apache Spark 3.x
-- Delta Lake
-- Python 3.10+
+- Delta Lake พร้อม Change Data Feed
+- Python 3.10+ พร้อม dataclasses
+- Databricks Auto Loader
 
 **สถาปัตยกรรม**:
 - Medallion Architecture (Bronze/Silver/Gold)
-- Star Schema Design
-- SCD Type 2 Implementation
+- Star Schema Design (รูปแบบ 1+4+4)
+- การใช้งาน SCD Type 2
+- Hash-based CDC
 
-**การทดสอบ**:
-- ชุดทดสอบอัตโนมัติครอบคลุม
-- การตรวจสอบระดับ Production
+**ฟีเจอร์หลัก**:
+- เฟรมเวิร์กแบบ dataclass ที่ปรับแต่งได้
+- ไปป์ไลน์คุณภาพข้อมูล 8 ขั้นตอน
+- การประมวลผลแบบเพิ่มหน่วยด้วย CDF
+- การทดสอบระดับ production
 - การวัดประสิทธิภาพ
 
 ---
 
-**อัปเดตล่าสุด**: มิถุนายน 2026  
-**เวอร์ชัน**: 1.0  
+**อัปเดตล่าสุด**: มกราคม 2026  
+**เวอร์ชัน**: 2.0  
 **สถานะ**: พร้อมใช้งาน Production ✅
 
 ---
 
-*สนุกกับการทำ Data Engineering! 🚀*
+*ขอให้สนุกกับการทำ Data Engineering! 🚀*
