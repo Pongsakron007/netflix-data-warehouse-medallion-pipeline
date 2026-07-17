@@ -6,8 +6,8 @@ from pyspark.sql.functions import col, count
 import sys
 import os
 
-# Add parent directory to path to import from framework notebook
-sys.path.insert(0, '/Workspace/Users/pongsakronk009@hotmail.com/Databricks-for-Data-Engineers-Bootcamp2/Netflix_project')
+# Add parent directory to path to import from framework notebook (use when import modlue from framework notebook)
+# sys.path.insert(0, '/Workspace/Users/pongsakronk009@hotmail.com/Databricks-for-Data-Engineers-Bootcamp2/Netflix_project')
 
 # Import GoldLayer class definition
 from dataclasses import dataclass
