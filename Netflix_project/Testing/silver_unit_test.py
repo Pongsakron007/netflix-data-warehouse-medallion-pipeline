@@ -75,7 +75,7 @@ class SilverLayer:
         for col_name, col_type in self.schema_detail.items():
             if col_type == "date":
                 change_type_exprs.append(
-                    expr(f"try_to_date({col_name}, 'MMMM dd, yyyy')").alias(col_name)
+                    expr(f"try_to_date({col_name}, 'MMMM d, yyyy')").alias(col_name)
                 )
             else:
                 change_type_exprs.append(
@@ -112,6 +112,18 @@ class SilverLayer:
             .transform(self._get_reason)
         )
     
+    def get_invalid_show_id_record(self, bronze_df: DataFrame) -> DataFrame:
+        """
+        Validate show_id follows the expected pattern: 's' + digits (e.g., s1, s74, s8809).
+        Records with invalid patterns (e.g., "Flying Fortress", " and probably will.") are flagged.
+        This catches CSV corruption where non-show_id values end up in the show_id column.
+        """
+        return (
+            bronze_df
+            .withColumn("_is_show_id_invalid", ~col("show_id").rlike("^s\\d+$"))
+            .transform(self._get_reason)
+        )
+    
     def get_dup_record(self, bronze_df: DataFrame, key_null_df: DataFrame) -> DataFrame:
         """Separate duplicate record."""
         partition_by_all = Window.partitionBy(*self.data_col).orderBy("_sk")
@@ -140,11 +152,15 @@ class SilverLayer:
             .unionByName(is_key_duplication_df)
         )
 
-    def get_all_bad_record(self, invalid_df: DataFrame, key_null_df: DataFrame, duplicate_df: DataFrame) -> DataFrame:
-        """Union all bad record."""
+    def get_all_bad_record(self, invalid_df: DataFrame, key_null_df: DataFrame, invalid_show_id_df: DataFrame, duplicate_df: DataFrame) -> DataFrame:
+        """
+        Union all bad record.
+        Includes: invalid type conversions, null keys, invalid show_id patterns, and duplicates.
+        """
         return (
             invalid_df
             .unionByName(key_null_df)
+            .unionByName(invalid_show_id_df)
             .unionByName(duplicate_df)
             .groupBy(*self.data_col, "_sk")
             .agg(flatten(collect_list("reason")).alias("reason"))
@@ -364,6 +380,44 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         self.assertIsNone(null_row["show_id"])
         self.assertIn("_is_show_id_null", null_row["reason"])
 
+    def test_get_invalid_show_id_record(self):
+        """Test identifying records with invalid show_id pattern."""
+        # Create data with invalid show_id patterns
+        invalid_show_id_data = [
+            ("Flying Fortress\"", "Movie", "Documentary", "2020", "TV-14", 1),  # Invalid pattern
+            (" and probably will.\"", "TV Show", "Show1", "2021", "TV-MA", 2),  # Invalid pattern
+            ("s123", "Movie", "Movie1", "2022", "R", 3),  # Valid pattern
+            ("s1", "TV Show", "Show2", "2023", "TV-PG", 4),  # Valid pattern
+            ("show123", "Movie", "Movie2", "2024", "PG-13", 5)  # Invalid (no 's' prefix)
+        ]
+        
+        silver = SilverLayer(
+            table_name="test",
+            schema_detail=self.test_schema,
+            keys=self.test_keys,
+            write_mode="overwrite",
+            spark=self.spark
+        )
+        
+        df = self._create_mock_bronze_df(data=invalid_show_id_data)
+        converted_df = silver.change_data_type(df)
+        invalid_show_id_df = silver.get_invalid_show_id_record(converted_df)
+        
+        # Should have 3 invalid show_id patterns
+        self.assertEqual(invalid_show_id_df.count(), 3)
+        
+        # Check the reasons
+        invalid_ids = [row["show_id"] for row in invalid_show_id_df.collect()]
+        self.assertIn("Flying Fortress\"", invalid_ids)
+        self.assertIn(" and probably will.\"", invalid_ids)
+        self.assertIn("show123", invalid_ids)
+        self.assertNotIn("s123", invalid_ids)
+        self.assertNotIn("s1", invalid_ids)
+        
+        # All should have _is_show_id_invalid reason
+        for row in invalid_show_id_df.collect():
+            self.assertIn("_is_show_id_invalid", row["reason"])
+
     def test_get_dup_record_row_duplication(self):
         """Test identifying exact duplicate rows."""
         # Create data with exact duplicates
@@ -450,8 +504,9 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         converted_df = silver.change_data_type(df)
         invalid_df = silver.get_invalid_record(converted_df)
         key_null_df = silver.get_key_null_record(converted_df)
+        invalid_show_id_df = silver.get_invalid_show_id_record(converted_df)
         dup_df = silver.get_dup_record(converted_df, key_null_df)
-        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, dup_df)
+        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, invalid_show_id_df, dup_df)
         
         # Should have 3 bad records: null key (s_sk=1), invalid year (s_sk=2), duplicate (s_sk=4)
         # Note: s_sk=3 is the first occurrence of s3, which is not considered bad
@@ -478,8 +533,9 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         converted_df = silver.change_data_type(df)
         invalid_df = silver.get_invalid_record(converted_df)
         key_null_df = silver.get_key_null_record(converted_df)
+        invalid_show_id_df = silver.get_invalid_show_id_record(converted_df)
         dup_df = silver.get_dup_record(converted_df, key_null_df)
-        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, dup_df)
+        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, invalid_show_id_df, dup_df)
         final_df = silver.get_final_result(converted_df, all_bad_df)
         
         # Should have 2 good records
@@ -511,8 +567,9 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         converted_df = silver.change_data_type(empty_df)
         invalid_df = silver.get_invalid_record(converted_df)
         key_null_df = silver.get_key_null_record(converted_df)
+        invalid_show_id_df = silver.get_invalid_show_id_record(converted_df)
         dup_df = silver.get_dup_record(converted_df, key_null_df)
-        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, dup_df)
+        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, invalid_show_id_df, dup_df)
         final_df = silver.get_final_result(converted_df, all_bad_df)
         
         # All should be empty
@@ -543,8 +600,9 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         converted_df = silver.change_data_type(df)
         invalid_df = silver.get_invalid_record(converted_df)
         key_null_df = silver.get_key_null_record(converted_df)
+        invalid_show_id_df = silver.get_invalid_show_id_record(converted_df)
         dup_df = silver.get_dup_record(converted_df, key_null_df)
-        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, dup_df)
+        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, invalid_show_id_df, dup_df)
         final_df = silver.get_final_result(converted_df, all_bad_df)
         
         # No bad records
@@ -557,10 +615,11 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         self.assertEqual(final_df.count(), 3)
 
     def test_all_bad_data(self):
-        """Test with 100% bad data."""
+        """Test with 100% bad data including invalid show_id."""
         all_bad_data = [
             (None, "TV Show", "Show1", "invalid", "TV-14", 1),  # Null key + invalid year
             (None, "Movie", "Movie1", "abc", "R", 2),  # Null key + invalid year
+            ("bad_id", "TV Show", "Show2", "2020", "TV-MA", 3),  # Invalid show_id pattern
         ]
         
         silver = SilverLayer(
@@ -575,15 +634,55 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         converted_df = silver.change_data_type(df)
         invalid_df = silver.get_invalid_record(converted_df)
         key_null_df = silver.get_key_null_record(converted_df)
+        invalid_show_id_df = silver.get_invalid_show_id_record(converted_df)
         dup_df = silver.get_dup_record(converted_df, key_null_df)
-        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, dup_df)
+        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, invalid_show_id_df, dup_df)
         final_df = silver.get_final_result(converted_df, all_bad_df)
         
-        # All records should be bad
-        self.assertGreaterEqual(all_bad_df.count(), 2)
+        # All records should be bad (2 null keys, 2 invalid years, 1 invalid show_id)
+        self.assertGreaterEqual(all_bad_df.count(), 3)
         
         # No good records
         self.assertEqual(final_df.count(), 0)
+
+    def test_multi_reason_bad_record(self):
+        """Test record with multiple validation failures (multi-reason bad record)."""
+        # Create data with multiple issues on same record
+        multi_reason_data = [
+            ("invalid_id", "TV Show", "Show1", "not_a_year", "TV-14", 1),  # Invalid show_id + invalid year
+            ("s123", "Movie", "Movie1", "2021", "R", 2)  # Good record
+        ]
+        
+        silver = SilverLayer(
+            table_name="test",
+            schema_detail=self.test_schema,
+            keys=self.test_keys,
+            write_mode="overwrite",
+            spark=self.spark
+        )
+        
+        df = self._create_mock_bronze_df(data=multi_reason_data)
+        converted_df = silver.change_data_type(df)
+        invalid_df = silver.get_invalid_record(converted_df)
+        key_null_df = silver.get_key_null_record(converted_df)
+        invalid_show_id_df = silver.get_invalid_show_id_record(converted_df)
+        dup_df = silver.get_dup_record(converted_df, key_null_df)
+        all_bad_df = silver.get_all_bad_record(invalid_df, key_null_df, invalid_show_id_df, dup_df)
+        final_df = silver.get_final_result(converted_df, all_bad_df)
+        
+        # Should have 1 bad record with multiple reasons
+        self.assertEqual(all_bad_df.count(), 1)
+        
+        # The bad record should have BOTH reasons
+        bad_row = all_bad_df.first()
+        self.assertEqual(bad_row["show_id"], "invalid_id")
+        self.assertEqual(len(bad_row["reason"]), 2)  # Two reasons
+        self.assertIn("_is_show_id_invalid", bad_row["reason"])
+        self.assertIn("_is_release_year_invalid", bad_row["reason"])
+        
+        # Only 1 good record should remain
+        self.assertEqual(final_df.count(), 1)
+        self.assertEqual(final_df.first()["show_id"], "s123")
 
 
 if __name__ == '__main__':

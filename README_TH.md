@@ -170,7 +170,7 @@ Databricks-for-Data-Engineers-Bootcamp2/
 │       ├── เอกสาร Silver (MD)         # คู่มือ Silver แบบทีละขั้นตอน
 │       └── เอกสาร Gold (MD)           # คู่มือ Gold แบบทีละขั้นตอน
 │
-├── silver_layer_tests.py                # ชุดทดสอบครอบคลุม
+├── silver_unit_test.py                  # ชุดทดสอบหน่วยครอบคลุม
 │   ├── คลาส SilverLayerTests           # วิธีทดสอบอัตโนมัติ 5 วิธี
 │   └── คลาส StarSchemaQueries          # ตัวช่วย SQL analytics
 │
@@ -963,10 +963,10 @@ tests.test_scd_type2_change_detection()
 - [Change Data Feed Guide](https://docs.databricks.com/delta/delta-change-data-feed.html)
 - [SCD Type 2 Best Practices](https://www.databricks.com/blog/2022/08/22/dimensional-modeling-delta-lake.html)
 
-### Notebooks ที่เกี่ยวข้อง
+### ไฟล์ที่เกี่ยวข้อง
 
-- `framework.ipynb` - การใช้งานไปป์ไลน์หลัก (BronzeLayer, SilverLayer, GoldLayer)
-- `silver_layer_tests.py` - ชุดทดสอบครอบคลุม
+- `framework` - โนตบุ๊คการใช้งานไปป์ไลน์หลัก (BronzeLayer, SilverLayer, GoldLayer)
+- `silver_unit_test.py` - ชุดทดสอบหน่วยครอบคลุม
 
 ### การสนับสนุน
 

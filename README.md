@@ -571,58 +571,17 @@ schema_location = "/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze_sche
 
 ---
 
-## 🧪 Testing Framework
+## 🧪 Testing
 
-### Test Suite: `SilverLayerTests`
+The project includes a comprehensive test suite in `silver_unit_test.py` that validates:
 
-**5 Comprehensive Tests**:
+* ✅ **Data Quality Pipeline** - 8-stage validation checks
+* ✅ **Star Schema Structure** - 9-table creation (1 main + 4 sub-dimensions + 4 bridges)
+* ✅ **SCD Type 2** - Historical change tracking
+* ✅ **Bad Record Handling** - Quarantine and audit trail
+* ✅ **Incremental Processing** - CDF-based streaming
 
-1. **test_data_quality_validation()** - Validates 8-stage quality checks
-   - ✅ Trim, type casting, invalid detection, null keys, duplicates
-
-2. **test_star_schema_creation()** - Verifies 9-table structure
-   - ✅ 1 main dimension + 4 sub-dimensions + 4 bridge tables
-
-3. **test_scd_type2_change_detection()** - Tests historical tracking
-   - ✅ Active flag updates, start/end dates, hash-based CDC
-
-4. **test_bad_record_handling()** - Validates quarantine logic
-   - ✅ Reason tracking, batch ID, rejection timestamp
-
-5. **test_incremental_processing()** - Tests CDF integration
-   - ✅ Checkpoint management, only new/changed records processed
-
-### Running Tests
-
-```python
-# Initialize test suite
-tests = SilverLayerTests(
-    silver_obj=silver,
-    main_dim_table="workspace.netflix.dim_titles_silver",
-    sub_dim_tables=[
-        "workspace.netflix.dim_cast_silver",
-        "workspace.netflix.dim_directors_silver",
-        "workspace.netflix.dim_countries_silver",
-        "workspace.netflix.dim_categories_silver"
-    ],
-    bridge_tables=[
-        "workspace.netflix.bridge_title_cast_silver",
-        "workspace.netflix.bridge_title_director_silver",
-        "workspace.netflix.bridge_title_country_silver",
-        "workspace.netflix.bridge_title_category_silver"
-    ],
-    bad_record_table="workspace.netflix.netflix_bronze_bad_record"
-)
-
-# Run all tests
-tests.test_data_quality_validation()
-tests.test_star_schema_creation()
-tests.test_scd_type2_change_detection()
-tests.test_bad_record_handling()
-tests.test_incremental_processing()
-```
-
-**Expected Results**: ✅ All 5 tests pass (100% pass rate)
+For detailed test execution instructions, refer to the test file documentation.
 
 ---
 
@@ -956,10 +915,10 @@ tests.test_scd_type2_change_detection()
 - [Change Data Feed Guide](https://docs.databricks.com/delta/delta-change-data-feed.html)
 - [SCD Type 2 Best Practices](https://www.databricks.com/blog/2022/08/22/dimensional-modeling-delta-lake.html)
 
-### Related Notebooks
+### Related Files
 
-- `framework.ipynb` - Main pipeline implementation (BronzeLayer, SilverLayer, GoldLayer)
-- `silver_layer_tests.py` - Comprehensive test suite
+- `framework` - Main pipeline implementation notebook (BronzeLayer, SilverLayer, GoldLayer)
+- `silver_unit_test.py` - Comprehensive unit test suite
 
 ### Support
 
