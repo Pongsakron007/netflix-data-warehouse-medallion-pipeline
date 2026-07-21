@@ -684,6 +684,10 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         self.assertEqual(final_df.count(), 1)
         self.assertEqual(final_df.first()["show_id"], "s123")
 
+    def test_something_else(self):
+        """Test something else."""
+        pass
+
 
 if __name__ == '__main__':
     # Run tests with verbosity
