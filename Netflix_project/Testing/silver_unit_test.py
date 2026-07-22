@@ -585,7 +585,9 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         valid_data = [
             ("s1", "TV Show", "Show1", "2020", "TV-14", 1),
             ("s2", "Movie", "Movie1", "2021", "R", 2),
-            ("s3", "TV Show", "Show3", "2022", "TV-MA", 3)
+            ("s3", "TV Show", "Show3", "2022", "TV-MA", 3),
+            ("s4", "Movie", "Movie2", "2023", "PG-13", 4), # add another valid record
+            ("s5", "TV Show", "Show5", "2024", "TV-14", 5)
         ]
         
         silver = SilverLayer(
@@ -612,7 +614,7 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         self.assertEqual(all_bad_df.count(), 0)
         
         # All records should be good
-        self.assertEqual(final_df.count(), 3)
+        self.assertEqual(final_df.count(), 5)
 
     def test_all_bad_data(self):
         """Test with 100% bad data including invalid show_id."""
