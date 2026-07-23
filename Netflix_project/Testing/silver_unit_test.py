@@ -652,6 +652,7 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         # Create data with multiple issues on same record
         multi_reason_data = [
             ("invalid_id", "TV Show", "Show1", "not_a_year", "TV-14", 1),  # Invalid show_id + invalid year
+            ("invalid_ids", "TV Show", "Show1", "not_a_years", "TV-14", 3),  # Invalid show_id + invalid year
             ("s123", "Movie", "Movie1", "2021", "R", 2)  # Good record
         ]
         
@@ -673,7 +674,7 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         final_df = silver.get_final_result(converted_df, all_bad_df)
         
         # Should have 1 bad record with multiple reasons
-        self.assertEqual(all_bad_df.count(), 1)
+        self.assertEqual(all_bad_df.count(), 2)
         
         # The bad record should have BOTH reasons
         bad_row = all_bad_df.first()

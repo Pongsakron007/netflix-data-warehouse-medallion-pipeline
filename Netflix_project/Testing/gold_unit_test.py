@@ -390,6 +390,7 @@ class TestGoldLayerWithMocks(unittest.TestCase):
         self.assertNotEqual(first_count, second_count, "Overwrite mode should replace data")
 
 
+
 if __name__ == '__main__':
     # Run tests with verbosity
     unittest.main(verbosity=2)
