@@ -458,6 +458,7 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         key_dup_data = [
             ("s1", "TV Show", "Show1_v1", "2020", "TV-14", 1),
             ("s1", "TV Show", "Show1_v2", "2021", "TV-MA", 2),  # Same key, different data
+            ("s1", "TV Show", "Show1_v3", "2022", "TV-MA", 4),  # Same key, different data
             ("s2", "Movie", "Movie1", "2021", "R", 3)
         ]
         
@@ -475,7 +476,7 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         dup_df = silver.get_dup_record(converted_df, key_null_df)
         
         # Should identify 2 key duplicates
-        self.assertEqual(dup_df.count(), 2)
+        self.assertEqual(dup_df.count(), 3)
         
         # Both should have key_duplicate reason
         reasons = dup_df.select("reason").collect()
