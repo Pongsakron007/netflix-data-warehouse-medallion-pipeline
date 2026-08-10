@@ -689,7 +689,7 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         self.assertEqual(final_df.first()["show_id"], "s123")
 
     def test_something_else(self):
-        """Test something else."""
+        """Test something else. Like gold layer a bit further down the pipeline"""
         pass
 
 
