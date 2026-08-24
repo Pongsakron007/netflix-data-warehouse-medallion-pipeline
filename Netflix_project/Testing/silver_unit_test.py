@@ -10,7 +10,7 @@ import sys
 import os
 
 # Add parent directory to path to import from framework notebook (use when import module from framework notebook)
-# sys.path.insert(0, '/Workspace/Users/pongsakronk009@hotmail.com/Databricks-for-Data-Engineers-Bootcamp2/Netflix_project')
+# sys.path.insert(0, '/Workspace/Users/email@hotmail.com/Databricks-for-Data-Engineers-Bootcamp2/Netflix_project')
 
 # Import SilverLayer class definition
 from dataclasses import dataclass
