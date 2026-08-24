@@ -2,7 +2,7 @@ bundle:
   name: Netflix dabs
 
 include:
-  - resources_job/*.yml
+  - ./Netlix_project/resources_job/*.yml
 
 variables:
   catalog:
