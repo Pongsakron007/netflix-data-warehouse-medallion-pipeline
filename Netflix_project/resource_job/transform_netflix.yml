@@ -1,0 +1,19 @@
+resources:
+  jobs:
+    transform_gold:
+      name: transform_gold_${bundle.target}
+
+      trigger:
+        periodic:
+          interval: 1
+          unit: DAYS
+
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+
+      tasks:
+        - task_key: transform
+          notebook_task:
+            notebook_path: ../src/module_12_framework/gold_layer/gold.py
+          environment_key: default
