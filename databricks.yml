@@ -1,0 +1,49 @@
+bundle:
+  name: Netflix dabs
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+  root_path:
+    default: ....
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: ....
+      root_path: ${var.root_path}
+    variables:
+      catalog: dev
+    resources:
+      jobs:
+        transform_gold:
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "4"
+
+  prod:
+    mode: production
+    workspace:
+      host: ...
+      root_path: ${var.root_path}
+    artifacts:
+      default:
+        type: whl
+        build: python3 -m build
+        path: ./logic_packages/
+    variables:
+      catalog: prod
+    resources:
+      jobs:
+        transform_gold:
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "4"
+                dependencies:
+                  - ./logic_packages/dist/*.whl
