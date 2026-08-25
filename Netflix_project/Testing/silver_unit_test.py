@@ -29,7 +29,7 @@ class SilverLayer:
         self.silver_table_name = f"{self.table_name}_silver"
         self.bad_record_table_name = f"{self.table_name}_bronze_bad_record"
         self.data_col = [col_name for col_name in self.schema_detail.keys()]
-        self.invalid_rule = {"int": "^[0-9]+$", "date": "^\\d{4}-\\d{2}-\\d{2}$"}
+        # self.invalid_rule = {"int": "^[0-9]+$", "date": "^\\d{4}-\\d{2}-\\d{2}$"}
         
         if self.spark is None:
             from pyspark.sql import SparkSession
