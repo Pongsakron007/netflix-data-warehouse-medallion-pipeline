@@ -1,14 +1,14 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 🚀 Netflix Job Workflow Setup Script
-# MAGIC 
+# MAGIC
 # MAGIC This script automatically creates or updates the Netflix data pipeline workflow from the stored configuration.
-# MAGIC 
+# MAGIC
 # MAGIC **Usage:**
 # MAGIC 1. Clone the Netflix project repository
 # MAGIC 2. Run this notebook
 # MAGIC 3. The job workflow will be created or updated automatically
-# MAGIC 
+# MAGIC
 # MAGIC **What it does:**
 # MAGIC - Reads the job configuration from `netflix_workflow_config.json`
 # MAGIC - Replaces workspace path placeholders with your current user path
@@ -192,9 +192,9 @@ else:
 
 # MAGIC %md
 # MAGIC ## 📝 Notes for Repository Users
-# MAGIC 
+# MAGIC
 # MAGIC **After cloning this project:**
-# MAGIC 
+# MAGIC
 # MAGIC 1. **Run this notebook** (`setup_job_workflow.py`) to create the job workflow
 # MAGIC 2. **To add new layers (e.g., Gold layer)**:
 # MAGIC    - Edit `netflix_workflow_config.json` to add the new task
@@ -203,7 +203,7 @@ else:
 # MAGIC 3. **Run the workflow**:
 # MAGIC    - Go to the job page (URL printed above)
 # MAGIC    - Click "Run now" to start the pipeline
-# MAGIC 
+# MAGIC
 # MAGIC **Example: Adding a Gold Layer**
 # MAGIC ```json
 # MAGIC {
@@ -217,7 +217,7 @@ else:
 # MAGIC   }
 # MAGIC }
 # MAGIC ```
-# MAGIC 
+# MAGIC
 # MAGIC **For CI/CD deployment:**
 # MAGIC - Consider using Databricks Asset Bundles (DABs)
 # MAGIC - See: https://docs.databricks.com/dev-tools/bundles/
