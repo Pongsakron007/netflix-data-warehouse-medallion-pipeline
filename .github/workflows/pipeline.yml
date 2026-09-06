@@ -34,11 +34,11 @@ jobs:
 
       - name: Build Local Packages
         run: |
-          python -m build logic_packages/
+          python -m build Netflix_project/logic_packages/
 
       - name: Install Local Dependencies
         run: |
-          pip3 install logic_packages/dist/*.whl
+          pip3 install Netflix_project/logic_packages/dist/*.whl
 
       - name: Run Unit Tests
         run: |
