@@ -9,173 +9,26 @@ from pyspark.sql.window import Window
 import sys
 import os
 
-# Add parent directory to path to import from framework notebook (use when import module from framework notebook)
-# sys.path.insert(0, '/Workspace/Users/email@hotmail.com/Databricks-for-Data-Engineers-Bootcamp2/Netflix_project')
+# Use this way of importing because we also use in github runner. 
+try:
+    from unified_fw.fw import SilverLayer
+except ImportError:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    from fw import SilverLayer
 
-# Import SilverLayer class definition
-from dataclasses import dataclass
+# Add parent directory to path to import from fw.py
+# In Databricks, use absolute path to project directory
 
+# Add the Netflix_project directory to path (parent of Testing directory)
+# project_path = '/Workspace/Users/pongsakronk009@hotmail.com/netflix-data-warehouse-medallion-pipeline/Netflix_project'
+# if project_path not in sys.path:
+#     sys.path.insert(0, project_path)
 
-@dataclass
-class SilverLayer:
-    table_name: str
-    schema_detail: dict[str, str]
-    keys: list[str]
-    write_mode: str
-    spark: SparkSession = None
-
-    def __post_init__(self) -> None:
-        self.bronze_table_name = f"{self.table_name}_bronze"
-        self.silver_table_name = f"{self.table_name}_silver"
-        self.bad_record_table_name = f"{self.table_name}_bronze_bad_record"
-        self.data_col = [col_name for col_name in self.schema_detail.keys()]
-        # self.invalid_rule = {"int": "^[0-9]+$", "date": "^\\d{4}-\\d{2}-\\d{2}$"}
-        
-        if self.spark is None:
-            from pyspark.sql import SparkSession
-            self.spark = SparkSession.getActiveSession()
-
-    def _get_reason(self, df: DataFrame) -> DataFrame:
-        """Helper method to get invalid reason."""
-        control_col = [col_name for col_name in df.columns if col_name.startswith("_") and col_name != "_sk"]
-        data_col = [col_name for col_name in df.columns if not col_name.startswith("_")]
-        or_statement = " OR ".join([col_name for col_name in control_col])
-        return (
-            df
-            .filter(or_statement)
-            .melt(
-                ids=[*data_col, "_sk"],
-                values=control_col,
-                variableColumnName="reason",
-                valueColumnName="status"
-            )
-            .filter(col("status") == True)
-            .groupBy(*data_col, "_sk")
-            .agg(collect_list("reason").alias("reason"))
-        )
-    
-    def trim_data(self, df: DataFrame) -> DataFrame:
-        """Trim all string columns to remove leading/trailing whitespace."""
-        df_columns = df.columns
-        
-        trim_exprs = [
-            trim(col(col_name)).alias(col_name) if col_type == "string" else col(col_name)
-            for col_name, col_type in self.schema_detail.items()
-        ]
-        if "_sk" in df_columns:
-            trim_exprs.append(col("_sk"))
-        
-        return df.select(*trim_exprs)
-    
-    def change_data_type(self, df: DataFrame) -> DataFrame:
-        """Change data type of columns based on schema_detail."""
-        df_columns = df.columns
-        
-        change_type_exprs = []
-        for col_name, col_type in self.schema_detail.items():
-            if col_type == "date":
-                change_type_exprs.append(
-                    expr(f"try_to_date({col_name}, 'MMMM d, yyyy')").alias(col_name)
-                )
-            else:
-                change_type_exprs.append(
-                    expr(f"try_cast({col_name} as {col_type})").alias(col_name)
-                )
-        
-        if "_sk" in df_columns:
-            change_type_exprs.append(col("_sk"))
-        
-        return df.select(*change_type_exprs)
-    
-    def get_invalid_record(self, bronze_df: DataFrame) -> DataFrame:
-        """
-        Separate invalid record based on schema_detail.
-        After type conversion, NULL values indicate invalid original data.
-        """
-        invalid_col = {
-            f"_is_{col_name}_invalid": col(col_name).isNull()
-            for col_name, col_type in self.schema_detail.items() if col_type in ["int", "date"]
-        }
-        
-        return (
-            bronze_df
-            .withColumns(invalid_col)
-            .transform(self._get_reason)
-        )
-    
-    def get_key_null_record(self, bronze_df: DataFrame) -> DataFrame:
-        """Separate key null record."""
-        key_null_statement = {f"_is_{col_name}_null": col(col_name).isNull() for col_name in self.keys}
-
-        return (
-            bronze_df.withColumns(key_null_statement)
-            .transform(self._get_reason)
-        )
-    
-    def get_invalid_show_id_record(self, bronze_df: DataFrame) -> DataFrame:
-        """
-        Validate show_id follows the expected pattern: 's' + digits (e.g., s1, s74, s8809).
-        Records with invalid patterns (e.g., "Flying Fortress", " and probably will.") are flagged.
-        This catches CSV corruption where non-show_id values end up in the show_id column.
-        """
-        return (
-            bronze_df
-            .withColumn("_is_show_id_invalid", ~col("show_id").rlike("^s\\d+$"))
-            .transform(self._get_reason)
-        )
-    
-    def get_dup_record(self, bronze_df: DataFrame, key_null_df: DataFrame) -> DataFrame:
-        """Separate duplicate record."""
-        partition_by_all = Window.partitionBy(*self.data_col).orderBy("_sk")
-        partition_by_key = Window.partitionBy(*self.keys)
-
-        bronze_not_null_df = bronze_df.join(key_null_df, ['_sk'], "left_anti")
-
-        is_row_duplicate_df = (
-            bronze_not_null_df
-            .withColumn("rn", row_number().over(partition_by_all))
-            .filter(col("rn") > 1)
-            .drop("rn")
-            .withColumn("reason", array(lit("_row_duplication")))
-        )
-
-        is_key_duplication_df = (
-            bronze_not_null_df
-            .join(is_row_duplicate_df, ['_sk'], "left_anti")
-            .withColumn("key_count", count("*").over(partition_by_key))
-            .filter(col("key_count") > 1)
-            .drop("key_count")
-            .withColumn("reason", array(lit("_key_duplicate")))
-        )
-        return (
-            is_row_duplicate_df
-            .unionByName(is_key_duplication_df)
-        )
-
-    def get_all_bad_record(self, invalid_df: DataFrame, key_null_df: DataFrame, invalid_show_id_df: DataFrame, duplicate_df: DataFrame) -> DataFrame:
-        """
-        Union all bad record.
-        Includes: invalid type conversions, null keys, invalid show_id patterns, and duplicates.
-        """
-        return (
-            invalid_df
-            .unionByName(key_null_df)
-            .unionByName(invalid_show_id_df)
-            .unionByName(duplicate_df)
-            .groupBy(*self.data_col, "_sk")
-            .agg(flatten(collect_list("reason")).alias("reason"))
-        )
-
-    def get_final_result(self, bronze_df: DataFrame, all_bad_df: DataFrame) -> DataFrame:
-        """Get only good record by dropping bad record."""
-        add_control_col = {"load_dt": current_date(), "load_dttm": current_timestamp()}
-        return (
-            bronze_df
-            .join(all_bad_df, ["_sk"], "left_anti")
-            .select(*self.data_col, "_sk")
-            .withColumns(add_control_col)
-        )
-
+# # Import SilverLayer class from fw.py
+# from fw import SilverLayer
 
 class TestSilverLayerWithMocks(unittest.TestCase):
     """Test SilverLayer with mocked Spark DataFrames to avoid using real data."""
@@ -240,7 +93,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         self.assertEqual(silver.table_name, "test")
@@ -264,7 +118,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=data_with_spaces)
@@ -283,7 +138,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df()
@@ -310,7 +166,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=invalid_data)
@@ -337,7 +194,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=invalid_data)
@@ -365,7 +223,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=null_key_data)
@@ -396,7 +255,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=invalid_show_id_data)
@@ -432,7 +292,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=dup_data)
@@ -467,7 +328,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=key_dup_data)
@@ -498,7 +360,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=mixed_data)
@@ -527,7 +390,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=mixed_data)
@@ -559,7 +423,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         # Create empty dataframe
@@ -596,7 +461,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=valid_data)
@@ -630,7 +496,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=all_bad_data)
@@ -662,7 +529,8 @@ class TestSilverLayerWithMocks(unittest.TestCase):
             schema_detail=self.test_schema,
             keys=self.test_keys,
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         df = self._create_mock_bronze_df(data=multi_reason_data)

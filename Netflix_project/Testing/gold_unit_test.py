@@ -6,73 +6,21 @@ from pyspark.sql.functions import col, count
 import sys
 import os
 
-# Add parent directory to path to import from framework notebook (use when import modlue from framework notebook)
-# sys.path.insert(0, '/Workspace/Users/pongsakronk009@hotmail.com/Databricks-for-Data-Engineers-Bootcamp2/Netflix_project')
+# # Add parent directory to path to import from fw.py
+# sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import GoldLayer class definition
-from dataclasses import dataclass
+# # Import GoldLayer class from fw.py
+# from fw import GoldLayer
 
-
-@dataclass
-class GoldLayer:
-    """Gold Layer for creating business-ready aggregation tables."""
-    table_name: str
-    keys: list[str]
-    write_mode: str
-    spark: SparkSession = None
-
-    def __post_init__(self):
-        self.gold_table_content_by_cast = f"{self.table_name}_content_by_cast_gold"
-        self.gold_yearly_content_trends = f"{self.table_name}_yearly_content_trends_gold"
-        
-        if self.spark is None:
-            from pyspark.sql import SparkSession
-            self.spark = SparkSession.getActiveSession()
-
-    def create_gold_content_by_cast(self) -> None:
-        """Create flattened view of content by cast."""
-        title_active_df = (
-            self.spark.table("dim_titles_silver")
-            .filter(col("active_flag") == True)
-        )
-        
-        bridge_cast_df = self.spark.table("bridge_title_cast_silver")
-        cast_df = self.spark.table("dim_cast_silver")
-
-        flattened_cast_df = (
-            title_active_df.alias("t")
-            .join(bridge_cast_df.alias("b"), col("t.show_id") == col("b.show_id"), "inner")
-            .join(cast_df.alias("c"), col("b.cast_id") == col("c.cast_id"), "inner")
-            .drop(col("b.cast_id"))
-            .drop(col("t.show_id"))
-        )
-
-        flattened_cast_df.write.format("delta").mode(self.write_mode).saveAsTable(
-            self.gold_table_content_by_cast
-        )
-    
-    def create_gold_yearly_content_trends(self) -> None:
-        """Create yearly content trends aggregation."""
-        title_df = (
-            self.spark.table("dim_titles_silver")
-            .filter(col("active_flag") == True)
-        )
-        
-        summary_trends_df = (
-            title_df
-            .groupBy(col("release_year"), col("type"))
-            .agg(count("show_id").alias("total_title"))
-            .orderBy(col("release_year").desc(), col("type"))
-        )
-        
-        summary_trends_df.write.format("delta").mode(self.write_mode).saveAsTable(
-            self.gold_yearly_content_trends
-        )
-
-    def run_gold_pipeline(self) -> None:
-        """Run all gold pipeline transformations."""
-        self.create_gold_content_by_cast()
-        self.create_gold_yearly_content_trends()
+# Use this way of importing because we also use in github runner. 
+try:
+    from unified_fw.fw import GoldLayer
+except ImportError:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    from fw import GoldLayer
 
 
 class TestGoldLayerWithMocks(unittest.TestCase):
@@ -159,7 +107,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         self.assertEqual(gold.table_name, "test")
@@ -185,7 +134,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         # Should not raise error, just create empty table
@@ -214,7 +164,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         gold.create_gold_content_by_cast()
@@ -242,7 +193,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         gold.create_gold_content_by_cast()
@@ -260,7 +212,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         gold.create_gold_yearly_content_trends()
@@ -284,7 +237,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         gold.create_gold_yearly_content_trends()
@@ -315,7 +269,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         # Should handle nulls gracefully
@@ -345,7 +300,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         gold.create_gold_content_by_cast()
@@ -371,7 +327,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
             table_name="test",
             keys=["show_id"],
             write_mode="overwrite",
-            spark=self.spark
+            spark=self.spark,
+            table_prefix=""  # Empty prefix for tests
         )
         
         # First run
