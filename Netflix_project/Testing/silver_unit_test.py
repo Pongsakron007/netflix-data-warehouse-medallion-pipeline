@@ -559,7 +559,7 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         self.assertEqual(all_bad_df.count(), 2)
         
         # The bad record should have BOTH reasons
-        bad_row = all_bad_df.first()
+        bad_row = all_bad_df.orderBy("show_id").first()
         self.assertEqual(bad_row["show_id"], "invalid_id")
         self.assertEqual(len(bad_row["reason"]), 2)  # Two reasons
         self.assertIn("_is_show_id_invalid", bad_row["reason"])
