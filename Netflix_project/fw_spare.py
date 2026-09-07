@@ -195,7 +195,6 @@ class SilverLayer:
     keys: list[str]
     write_mode: str
     spark: SparkSession = None
-    table_prefix: str = "workspace.netflix."  # Default for production, set to "" for tests
 
     def __post_init__(self) -> None:
         self.bronze_table_name = f"{self.table_name}_bronze"
@@ -483,10 +482,10 @@ class SilverLayer:
         Each dimension table stores unique master data.
         """
         configs = [
-            ("cast", "cast_name", "cast_id", f"{self.table_prefix}dim_cast_silver"),
-            ("director", "director_name", "director_id", f"{self.table_prefix}dim_directors_silver"),
-            ("country", "country_name", "country_id", f"{self.table_prefix}dim_countries_silver"),
-            ("listed_in", "category_name", "category_id", f"{self.table_prefix}dim_categories_silver")
+            ("cast", "cast_name", "cast_id", "workspace.netflix.dim_cast_silver"),
+            ("director", "director_name", "director_id", "workspace.netflix.dim_directors_silver"),
+            ("country", "country_name", "country_id", "workspace.netflix.dim_countries_silver"),
+            ("listed_in", "category_name", "category_id", "workspace.netflix.dim_categories_silver")
         ]
 
         batch_msg = f" (Batch {batch_id})" if batch_id is not None else ""
@@ -494,7 +493,7 @@ class SilverLayer:
         
         for src_col, target_name, id_name, dim_table in configs:
             dim_df = self._transform_and_explode_dimension(final_df, src_col, target_name, id_name)
-            target_dim = DeltaTable.forName(self.spark, dim_table)
+            target_dim = DeltaTable.forName(spark, dim_table)
             (target_dim.alias("target")
              .merge(dim_df.alias("source"), f"target.{id_name} = source.{id_name}")
              .whenNotMatchedInsertAll()
@@ -509,10 +508,10 @@ class SilverLayer:
         Bridge tables handle many-to-many relationships using _sk and dimension IDs.
         """
         configs = [
-            ("cast", "cast_name", "cast_id", f"{self.table_prefix}bridge_title_cast_silver"),
-            ("director", "director_name", "director_id", f"{self.table_prefix}bridge_title_director_silver"),
-            ("country", "country_name", "country_id", f"{self.table_prefix}bridge_title_country_silver"),
-            ("listed_in", "category_name", "category_id", f"{self.table_prefix}bridge_title_category_silver")
+            ("cast", "cast_name", "cast_id", "workspace.netflix.bridge_title_cast_silver"),
+            ("director", "director_name", "director_id", "workspace.netflix.bridge_title_director_silver"),
+            ("country", "country_name", "country_id", "workspace.netflix.bridge_title_country_silver"),
+            ("listed_in", "category_name", "category_id", "workspace.netflix.bridge_title_category_silver")
         ]
 
         batch_msg = f" (Batch {batch_id})" if batch_id is not None else ""
@@ -520,7 +519,7 @@ class SilverLayer:
         
         for src_col, target_name, id_name, bridge_table in configs:
             bridge_df = self._transform_and_explode_bridge(final_df, src_col, target_name, id_name)
-            target_bridge = DeltaTable.forName(self.spark, bridge_table)
+            target_bridge = DeltaTable.forName(spark, bridge_table)
             (target_bridge.alias("target")
              .merge(bridge_df.alias("source"), f"target._sk = source._sk AND target.{id_name} = source.{id_name}")
              .whenNotMatchedInsertAll()
@@ -551,7 +550,7 @@ class SilverLayer:
         print(f"\n--- Loading Main Dimension Table{batch_msg} ---")
         
         # Get target main dimension table
-        target_main_table = DeltaTable.forName(self.spark, f"{self.table_prefix}dim_titles_silver")
+        target_main_table = DeltaTable.forName(spark, "workspace.netflix.dim_titles_silver")
         
         # ------------------------------------------------------------------
         # STEP 1: SCD TYPE 2 - Close historical changed rows
@@ -683,7 +682,6 @@ class GoldLayer():
     keys: list[str]
     write_mode: str
     spark: SparkSession = None
-    table_prefix: str = "workspace.netflix."  # Default for production, set to "" for tests
 
     def __post_init__(self):
         self.gold_table_content_by_cast = f"{self.table_name}_content_by_cast_gold"
@@ -719,13 +717,13 @@ class GoldLayer():
         '''
         # Retrive only current version of dim_titles_silver
         title_active_df = (
-            self.spark.table(f"{self.table_prefix}dim_titles_silver")
+            spark.table("workspace.netflix.dim_titles_silver")
             .filter(col("active_flag") == True)
         )
         
         # Retrive both bridge_title_cast_silver and dim_cast_silver 
-        bridge_cast_df = self.spark.table(f"{self.table_prefix}bridge_title_cast_silver")
-        cast_df = self.spark.table(f"{self.table_prefix}dim_cast_silver")
+        bridge_cast_df = spark.table("workspace.netflix.bridge_title_cast_silver")
+        cast_df = spark.table("workspace.netflix.dim_cast_silver")
 
         # Join all three tables
         flattened_cast_df = (
@@ -747,7 +745,7 @@ class GoldLayer():
         '''
         # Retrive only current version of dim_titles_silver
         title_df = (
-            self.spark.table(f"{self.table_prefix}dim_titles_silver")
+            spark.table("workspace.netflix.dim_titles_silver")
             .filter(col("active_flag") == True)
             )
         # Group by release_year and type

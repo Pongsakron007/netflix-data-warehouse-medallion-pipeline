@@ -9,26 +9,29 @@ from pyspark.sql.window import Window
 import sys
 import os
 
-# Use this way of importing because we also use in github runner. 
+# Import logic that works in both Databricks and GitHub runner
 try:
+    # Try GitHub package structure first
     from unified_fw.fw import SilverLayer
 except ImportError:
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_dir)
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    from fw import SilverLayer
-
-# Add parent directory to path to import from fw.py
-# In Databricks, use absolute path to project directory
-
-# Add the Netflix_project directory to path (parent of Testing directory)
-# project_path = '/Workspace/Users/pongsakronk009@hotmail.com/netflix-data-warehouse-medallion-pipeline/Netflix_project'
-# if project_path not in sys.path:
-#     sys.path.insert(0, project_path)
-
-# # Import SilverLayer class from fw.py
-# from fw import SilverLayer
+    # Fallback for Databricks and local development
+    try:
+        # If __file__ is defined (GitHub runner, local Python)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        # Add logic_packages/src to path for unified_fw package
+        package_path = os.path.join(project_root, 'logic_packages', 'src')
+        if package_path not in sys.path:
+            sys.path.insert(0, package_path)
+    except NameError:
+        # __file__ not defined (Databricks environment)
+        # Use absolute path for Databricks - add the package source directory
+        package_path = '/Workspace/Users/pongsakronk009@hotmail.com/netflix-data-warehouse-medallion-pipeline/Netflix_project/logic_packages/src'
+        if package_path not in sys.path:
+            sys.path.insert(0, package_path)
+    
+    # Now import from unified_fw package
+    from unified_fw.fw import SilverLayer
 
 class TestSilverLayerWithMocks(unittest.TestCase):
     """Test SilverLayer with mocked Spark DataFrames to avoid using real data."""
