@@ -5,7 +5,6 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType, 
 from pyspark.sql.functions import col, count
 import sys
 import os
-from delta import configure_spark_with_delta_pip  # 1. เพิ่ม import นี้เข้ามา
 
 # # Add parent directory to path to import from fw.py
 # sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,16 +12,32 @@ from delta import configure_spark_with_delta_pip  # 1. เพิ่ม import �
 # # Import GoldLayer class from fw.py
 # from fw import GoldLayer
 
-# Use this way of importing because we also use in github runner. 
+# Import logic that works in both Databricks and GitHub runner
 try:
+    # Try GitHub package structure first
     from unified_fw.fw import GoldLayer
 except ImportError:
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_dir)
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    from fw import GoldLayer
+    # Fallback for Databricks and local development
+    try:
+        # If __file__ is defined (GitHub runner, local Python)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        # Add logic_packages/src to path for unified_fw package
+        package_path = os.path.join(project_root, 'logic_packages', 'src')
+        if package_path not in sys.path:
+            sys.path.insert(0, package_path)
+    except NameError:
+        # __file__ not defined (Databricks environment)
+        # Use absolute path for Databricks - add the package source directory
+        package_path = '/Workspace/Users/pongsakronk009@hotmail.com/netflix-data-warehouse-medallion-pipeline/Netflix_project/logic_packages/src'
+        if package_path not in sys.path:
+            sys.path.insert(0, package_path)
+    
+    # Now import from unified_fw package
+    from unified_fw.fw import GoldLayer
 
+# 1. เพิ่ม import นี้ไว้ด้านบนสุดของไฟล์ silver_unit_test.py
+from delta import configure_spark_with_delta_pip
 
 class TestGoldLayerWithMocks(unittest.TestCase):
     """Test GoldLayer with mocked Spark tables to avoid using real data."""
