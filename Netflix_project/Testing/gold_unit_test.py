@@ -5,12 +5,8 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType, 
 from pyspark.sql.functions import col, count
 import sys
 import os
-
-# # Add parent directory to path to import from fw.py
-# sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# # Import GoldLayer class from fw.py
-# from fw import GoldLayer
+# 1. Add import to silver_unit_test.py
+from delta import configure_spark_with_delta_pip
 
 # Import logic that works in both Databricks and GitHub runner
 try:
@@ -35,9 +31,6 @@ except ImportError:
     
     # Now import from unified_fw package
     from unified_fw.fw import GoldLayer
-
-# 1. เพิ่ม import นี้ไว้ด้านบนสุดของไฟล์ silver_unit_test.py
-from delta import configure_spark_with_delta_pip
 
 class TestGoldLayerWithMocks(unittest.TestCase):
     """Test GoldLayer with mocked Spark tables to avoid using real data."""

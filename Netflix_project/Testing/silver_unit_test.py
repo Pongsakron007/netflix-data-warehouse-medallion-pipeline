@@ -8,6 +8,8 @@ from pyspark.sql.functions import row_number, monotonically_increasing_id
 from pyspark.sql.window import Window
 import sys
 import os
+# 1. Add import to silver_unit_test.py
+from delta import configure_spark_with_delta_pip
 
 # Import logic that works in both Databricks and GitHub runner
 try:
@@ -32,10 +34,6 @@ except ImportError:
     
     # Now import from unified_fw package
     from unified_fw.fw import SilverLayer
-
-# 1. เพิ่ม import นี้ไว้ด้านบนสุดของไฟล์ silver_unit_test.py
-from delta import configure_spark_with_delta_pip
-
 
 class TestSilverLayerWithMocks(unittest.TestCase):
     
