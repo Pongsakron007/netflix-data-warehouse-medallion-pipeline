@@ -7,7 +7,10 @@ include:
 variables:
   catalog:
   root_path:
-    default: ....
+    default: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+  package_dependencies:
+    description: "Python dependencies for job environments"
+    default: []
 
 targets:
   dev:
@@ -18,13 +21,6 @@ targets:
       root_path: ${var.root_path}
     variables:
       catalog: dev
-    resources:
-      jobs:
-        transform_gold:
-          environments:
-            - environment_key: default
-              spec:
-                environment_version: "4"
 
   prod:
     mode: production
@@ -38,12 +34,6 @@ targets:
         path: ./logic_packages/
     variables:
       catalog: prod
-    resources:
-      jobs:
-        transform_gold:
-          environments:
-            - environment_key: default
-              spec:
-                environment_version: "4"
-                dependencies:
-                  - ./logic_packages/dist/*.whl
+
+      package_dependencies:
+        - ./logic_packages/dist/*.whl
