@@ -5,6 +5,7 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType, 
 from pyspark.sql.functions import col, count
 import sys
 import os
+from delta import configure_spark_with_delta_pip  # 1. เพิ่ม import นี้เข้ามา
 
 # # Add parent directory to path to import from fw.py
 # sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,10 +30,17 @@ class TestGoldLayerWithMocks(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up Spark session once for all tests."""
-        # Use existing Spark session (required for Spark Connect/Serverless)
         cls.spark = SparkSession.getActiveSession()
         if cls.spark is None:
-            cls.spark = SparkSession.builder.appName("GoldLayerUnitTests").getOrCreate()
+            builder = (
+                SparkSession.builder
+                .appName("GoldLayerUnitTests")
+                .master("local[*]")
+                .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+                .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            )
+            # configure_spark_with_delta_pip จะใส่ JAR package ให้ตรงกับ pip package โดยอัตโนมัติ
+            cls.spark = configure_spark_with_delta_pip(builder).getOrCreate()
     
     @classmethod
     def tearDownClass(cls):

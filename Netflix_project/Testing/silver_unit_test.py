@@ -33,15 +33,25 @@ except ImportError:
     # Now import from unified_fw package
     from unified_fw.fw import SilverLayer
 
+# 1. เพิ่ม import นี้ไว้ด้านบนสุดของไฟล์ silver_unit_test.py
+from delta import configure_spark_with_delta_pip
+
+
 class TestSilverLayerWithMocks(unittest.TestCase):
-    """Test SilverLayer with mocked Spark DataFrames to avoid using real data."""
     
     @classmethod
     def setUpClass(cls):
         """Set up Spark session once for all tests."""
         cls.spark = SparkSession.getActiveSession()
         if cls.spark is None:
-            raise RuntimeError("No active Spark session found. Run tests in a Databricks notebook environment.")
+            builder = (
+                SparkSession.builder
+                .appName("SilverLayerUnitTests")
+                .master("local[*]")
+                .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+                .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            )
+            cls.spark = configure_spark_with_delta_pip(builder).getOrCreate()
     
     @classmethod
     def tearDownClass(cls):
@@ -550,7 +560,7 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         
         # The bad record should have BOTH reasons
         bad_row = all_bad_df.first()
-        self.assertEqual(bad_row["show_id"], "invalid_id")
+        self.assertEqual(bad_row["show_id"], "invalid_ids")
         self.assertEqual(len(bad_row["reason"]), 2)  # Two reasons
         self.assertIn("_is_show_id_invalid", bad_row["reason"])
         self.assertIn("_is_release_year_invalid", bad_row["reason"])
