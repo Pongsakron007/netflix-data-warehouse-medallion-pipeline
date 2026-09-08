@@ -13,19 +13,20 @@ variables:
     default: []
 
 targets:
-  dev:
-    mode: development
-    default: true
-    workspace:
-      host: ....
-      root_path: ${var.root_path}
-    variables:
-      catalog: dev
+  # dev:
+  #   mode: development
+  #   default: true
+  #   workspace:
+  #     host: ....
+  #     root_path: ${var.root_path}
+  #   variables:
+  #     catalog: dev
 
   prod:
     mode: production
+    default: true # use for prevent databricks bundle validate error
     workspace:
-      host: ...
+      # host: ...
       root_path: ${var.root_path}
     artifacts:
       default:

@@ -1,7 +1,7 @@
 resources:
   jobs:
-    transform_gold:
-      name: transform_gold_${bundle.target}
+    pipeline_job:
+      name: pipline_${bundle.target}
 
       trigger:
         periodic:
@@ -13,7 +13,13 @@ resources:
           default: ${var.catalog}
 
       tasks:
-        - task_key: transform
+        - task_key: run Netflix pipeline
           notebook_task:
-            notebook_path: ../src/module_12_framework/gold_layer/gold.py
+            notebook_path: ../run_rocess_all/run_auto_loader_process.py
           environment_key: default
+  
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies: ${var.package_dependencies}
