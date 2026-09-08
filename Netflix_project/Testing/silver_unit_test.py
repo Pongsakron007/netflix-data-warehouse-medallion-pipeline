@@ -11,28 +11,52 @@ import os
 # 1. Add import to silver_unit_test.py
 from delta import configure_spark_with_delta_pip
 
-# Import logic that works in both Databricks and GitHub runner
+# # Import logic that works in both Databricks and GitHub runner
+# try:
+#     # Try GitHub package structure first
+#     from unified_fw.fw import SilverLayer
+# except ImportError:
+#     # Fallback for Databricks and local development
+#     try:
+#         # If __file__ is defined (GitHub runner, local Python)
+#         current_dir = os.path.dirname(os.path.abspath(__file__))
+#         project_root = os.path.dirname(current_dir)
+#         # Add logic_packages/src to path for unified_fw package
+#         package_path = os.path.join(project_root, 'logic_packages', 'src')
+#         if package_path not in sys.path:
+#             sys.path.insert(0, package_path)
+#     except NameError:
+#         # __file__ not defined (Databricks environment)
+#         # Use absolute path for Databricks - add the package source directory
+#         package_path = '/Workspace/Users/pongsakronk009@hotmail.com/netflix-data-warehouse-medallion-pipeline/Netflix_project/logic_packages/src'
+#         if package_path not in sys.path:
+#             sys.path.insert(0, package_path)
+    
+#     # Now import from unified_fw package
+#     from unified_fw.fw import SilverLayer
+
+# Import logic that works in GitHub Runner, Local, and Databricks
 try:
-    # Try GitHub package structure first
     from unified_fw.fw import SilverLayer
 except ImportError:
-    # Fallback for Databricks and local development
-    try:
-        # If __file__ is defined (GitHub runner, local Python)
+    # 1. check whether __file__  (GitHub Runner/Local Yes, Databricks use os.getcwd())
+    if "__file__" in globals():
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(current_dir)
-        # Add logic_packages/src to path for unified_fw package
-        package_path = os.path.join(project_root, 'logic_packages', 'src')
-        if package_path not in sys.path:
-            sys.path.insert(0, package_path)
-    except NameError:
-        # __file__ not defined (Databricks environment)
-        # Use absolute path for Databricks - add the package source directory
-        package_path = '/Workspace/Users/pongsakronk009@hotmail.com/netflix-data-warehouse-medallion-pipeline/Netflix_project/logic_packages/src'
-        if package_path not in sys.path:
-            sys.path.insert(0, package_path)
-    
-    # Now import from unified_fw package
+    else:
+        current_dir = os.getcwd()
+
+    # 2. find location project_root by try go back 1 step
+    project_root = os.path.abspath(os.path.join(current_dir, ".."))
+    package_path = os.path.join(project_root, "logic_packages", "src")
+
+    # If go back but don't find (in case Root directly) use current folder
+    if not os.path.exists(package_path):
+        package_path = os.path.join(current_dir, "logic_packages", "src")
+
+    # 3. ADD sys.path
+    if package_path not in sys.path:
+        sys.path.insert(0, package_path)
+
     from unified_fw.fw import SilverLayer
 
 class TestSilverLayerWithMocks(unittest.TestCase):
