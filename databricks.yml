@@ -32,9 +32,9 @@ targets:
       default:
         type: whl
         build: python3 -m build
-        path: ./logic_packages/
+        path: ./Netflix_project/logic_packages/
     variables:
       catalog: prod
 
       package_dependencies:
-        - ./logic_packages/dist/*.whl
+        - ./Netflix_project/logic_packages/dist/*.whl
