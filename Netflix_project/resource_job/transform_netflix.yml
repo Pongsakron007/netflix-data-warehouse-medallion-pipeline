@@ -15,7 +15,8 @@ resources:
       tasks:
         - task_key: run_Netflix_pipeline # can't have white space
           notebook_task:
-            notebook_path: ../run_process_all/run_auto_loader_process.py
+            # notebook_path: ./Netflix_project/run_process_all/run_auto_loader_process.py
+            notebook_path: ../run_process_all/run_auto_loader_process.ipynb
           environment_key: default
   
       environments:
