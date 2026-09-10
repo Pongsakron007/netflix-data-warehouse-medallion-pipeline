@@ -13,10 +13,29 @@ resources:
           default: ${var.catalog}
 
       tasks:
-        - task_key: run_Netflix_pipeline # can't have white space
+        - task_key: bronze_task
           notebook_task:
-            # notebook_path: ./Netflix_project/run_process_all/run_auto_loader_process.py
-            notebook_path: ../run_process_all/run_auto_loader_process.ipynb
+            notebook_path: ../bronze_Netflix/bronze_fw_auto_loader_config.ipynb
+            base_parameters:
+              pipeline_name: netflix_auto_loader
+          environment_key: default
+        
+        - task_key: silver_task
+          depends_on:
+            - task_key: bronze_task
+          notebook_task:
+            notebook_path: ../silver_Netflix/silver_fw_config.ipynb
+            base_parameters:
+              pipeline_name: netflix
+          environment_key: default
+        
+        - task_key: gold_task
+          depends_on:
+            - task_key: silver_task
+          notebook_task:
+            notebook_path: ../gold_Netflix/gold_fw_config.ipynb
+            base_parameters:
+              pipeline_name: netflix
           environment_key: default
   
       environments:
