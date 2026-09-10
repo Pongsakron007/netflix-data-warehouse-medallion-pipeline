@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.sql.window import Window
 from datetime import *
 from delta.tables import *
 from pyspark.sql.types import *
+# from pyspark.sql.functions import col
 
 @dataclass
 class BronzeLayer:
@@ -30,7 +32,7 @@ class BronzeLayer:
     # Alternative method to get variable from config table.
     @classmethod
     def from_config_table(cls, pipeline_name:str) -> "BronzeLayer":
-        conf = (spark.table("netflix.config_table")
+        conf = (SparkSession.getActiveSession().table("netflix.config_table")
                .filter(col("pipeline_name") == pipeline_name)
                .select("file_path", "header", "delimiter", "table_name", "schema_detail")
                .first())
@@ -45,7 +47,7 @@ class BronzeLayer:
     # Read data from file
     def read_from_file(self) -> DataFrame:
         df = (
-            spark.read.format(self.format_type)
+            self.spark.read.format(self.format_type)
             .option("header", self.header)
             .option("delimiter", self.delimiter)
             .load(self.file_path)
@@ -76,7 +78,7 @@ class BronzeLayer:
     def _init_bronze_table(self) -> None:
         # created schema for first time and enable CDF to table
         ## 1. First check if table exists or not
-        if spark.catalog.tableExists(self.target_table_bronze):
+        if self.spark.catalog.tableExists(self.target_table_bronze):
             print(f"Table {self.target_table_bronze} already exists.")
             return # end method immediately
             
@@ -103,7 +105,7 @@ class BronzeLayer:
             bronze_schema = StructType(schema_fields + metadata_fields)
             
             # Create empty DataFrame with defined schema
-            empty_df = spark.createDataFrame([], bronze_schema)
+            empty_df = self.spark.createDataFrame([], bronze_schema)
             
             # Create table from Schema and enable CDF with Python API
             (
@@ -139,7 +141,7 @@ class BronzeLayer:
 
         # 1. Establish Auto Loader Stream
         auto_loader_netflix = (
-            spark.readStream
+            self.spark.readStream
             .format("cloudFiles")
             .option("cloudFiles.format", file_format)
             .option("cloudFiles.schemaEvolutionMode", "rescue") 
@@ -212,7 +214,7 @@ class SilverLayer:
     @classmethod
     def from_config_table(cls, pipeline_name: str) -> "SilverLayer":
         conf = (
-            spark.table("workspace.netflix.config_table")
+            SparkSession.getActiveSession().table("workspace.netflix.config_table")
             .filter(col("pipeline_name") == pipeline_name)
             .select(
                 "table_name", "schema_detail", "keys", "write_mode"
@@ -616,7 +618,7 @@ class SilverLayer:
         # Create a stream from the bronze table
         # Note: _sk is added in _process_quality_checks_batch to avoid collision across batches
         cdf_stream = (
-            spark.readStream
+            self.spark.readStream
             .option("readChangeFeed", "true")
             .option("startingVersion", 0)  # Start from version 0 or use checkpoint
             .table(self.bronze_table_name)
@@ -697,7 +699,7 @@ class GoldLayer():
     @classmethod
     def from_config_table(cls, pipeline_name: str) -> "GoldLayer":
         conf = (
-            spark.table("workspace.netflix.config_table")
+            SparkSession.getActiveSession().table("workspace.netflix.config_table")
             .filter(col("pipeline_name") == pipeline_name)
             .select(
                 "table_name", "keys", "write_mode"
