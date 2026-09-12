@@ -1,11 +1,12 @@
-# 🎬 Netflix Data Engineering Pipeline
+# 🎬 Netflix Data Warehouse - Medallion Pipeline
 
-> **A production-ready data pipeline implementing the Medallion Architecture (Bronze → Silver → Gold) for Netflix content analysis**
+> **A production-ready data warehouse implementing the Medallion Architecture (Bronze → Silver → Gold) for Netflix content analysis, built with Databricks Asset Bundles (DABs)**
 
 [![Databricks](https://img.shields.io/badge/Databricks-FF3621?style=flat&logo=databricks&logoColor=white)](https://databricks.com)
 [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat&logo=apachespark&logoColor=white)](https://spark.apache.org)
 [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-00ADD8?style=flat&logo=delta&logoColor=white)](https://delta.io)
 [![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![DABs](https://img.shields.io/badge/DABs-Enabled-blue)](https://docs.databricks.com/dev-tools/bundles/)
 
 ---
 
@@ -15,35 +16,32 @@
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Pipeline Components](#pipeline-components)
-- [Table Schema](#table-schema)
+- [Deployment with DABs](#deployment-with-dabs)
 - [Getting Started](#getting-started)
 - [Configuration](#configuration)
 - [Testing Framework](#testing-framework)
 - [Usage Examples](#usage-examples)
-- [Performance Metrics](#performance-metrics)
-- [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
 
 ---
 
 ## 🎯 Overview
 
-This project implements a **scalable, production-ready data pipeline** for processing Netflix content data using Databricks and the **Medallion Architecture**. Built with **configurable dataclass-based pipeline classes**, the framework ingests raw data, applies comprehensive data quality validation, and transforms it into a **star schema** optimized for analytics and business intelligence.
+This project implements a **production-ready data warehouse** for processing Netflix content data using Databricks and the **Medallion Architecture**. Built as a **reusable Python package** with **Databricks Asset Bundles (DABs)**, the framework provides a configurable, dataclass-based approach to building ETL pipelines that ingest raw data, apply comprehensive data quality validation, and transform it into a **star schema** optimized for analytics and business intelligence.
 
 ### Key Features
 
-✅ **Configurable Framework**: Dataclass-based `BronzeLayer`, `SilverLayer`, and `GoldLayer` classes  
+✅ **DABs-Native Deployment**: Infrastructure-as-code with Databricks Asset Bundles  
+✅ **Packaged Framework**: Reusable Python wheel package (`unified_fw`) with `BronzeLayer`, `SilverLayer`, and `GoldLayer` classes  
 ✅ **Medallion Architecture**: Bronze (raw) → Silver (cleaned) → Gold (aggregated) layers  
-✅ **Databricks Auto Loader**: Incremental S3 ingestion with folder-path detection and schema evolution  
-✅ **Data Quality Validation**: 8-stage quality check pipeline with bad record quarantine  
-✅ **SCD Type 2**: Historical change tracking with temporal validity  
-✅ **Star Schema**: 1 main dimension + 4 sub-dimensions + 4 bridge tables  
-✅ **Hash-based Change Detection**: Efficient delta identification using SHA-256  
-✅ **Incremental Processing**: Change Data Feed (CDF) enabled for all downstream layers  
-✅ **Production Scalability**: Structured streaming with `trigger(availableNow=True)`  
-✅ **Comprehensive Testing**: 5 automated test suites with 100% pass rate  
-✅ **Production Performance**: 317+ records/second throughput  
+✅ **Databricks Auto Loader**: Incremental cloud storage ingestion with schema evolution  
+✅ **Data Quality Validation**: Multi-stage quality check pipeline with bad record quarantine  
+✅ **SCD Type 2**: Historical change tracking with temporal validity and hash-based change detection  
+✅ **Star Schema**: 1 main dimension + 4 sub-dimensions + 4 bridge tables (9 tables total)  
+✅ **Incremental Processing**: Change Data Feed (CDF) enabled for downstream layers  
+✅ **Serverless-Ready**: Optimized for Spark Connect Serverless compute  
+✅ **Production Orchestration**: Automated daily job with task dependencies  
+✅ **Comprehensive Testing**: Unit test suites for Silver and Gold layers  
 
 ### Business Use Cases
 
@@ -159,13 +157,40 @@ This project implements a **scalable, production-ready data pipeline** for proce
 ## 📂 Project Structure
 
 ```
-Databricks-for-Data-Engineers-Bootcamp2/
+netflix-data-warehouse-medallion-pipeline/
+│
+├── databricks.yml                     # DABs bundle configuration
+├── requirements.txt                   # Project dependencies
+├── README.md                          # This file (English)
+├── README_TH.md                       # Thai documentation
 │
 ├── Netflix_project/
-│   └── framework.ipynb                 # Main pipeline implementation
-│       ├── BronzeLayer class          # Raw data ingestion logic
-│       ├── SilverLayer class          # Data quality & transformation logic
-│       ├── GoldLayer class            # Business aggregation logic
+│   ├── logic_packages/                # Reusable Python package
+│   │   ├── pyproject.toml             # Package configuration
+│   │   └── src/
+│   │       └── unified_fw/
+│   │           └── fw.py          # Core framework (BronzeLayer, SilverLayer, GoldLayer)
+│   │
+│   ├── resource_job/                  # DABs job definitions
+│   │   └── transform_netflix.yml      # Pipeline job configuration
+│   │
+│   ├── bronze_Netflix/                # Bronze layer notebooks
+│   │   ├── bronze_fw_auto_loader_config.ipynb
+│   │   └── bronze_fw_config.ipynb
+│   │
+│   ├── silver_Netflix/                # Silver layer notebooks
+│   │   └── silver_fw_config.ipynb
+│   │
+│   ├── gold_Netflix/                  # Gold layer notebooks
+│   │   └── gold_fw_config.ipynb
+│   │
+│   ├── Testing/                       # Unit tests
+│   │   ├── silver_unit_test.py
+│   │   ├── gold_unit_test.py
+│   │   └── README_gold_unit_test.md
+│   │
+│   ├── _ddl_Netflix.ipynb             # Table DDL definitions
+│   └── framework.ipynb                # Legacy framework reference            # Business aggregation logic
 │       ├── Bronze Layer docs (MD)     # Step-by-step Bronze guide
 │       ├── Silver Layer docs (MD)     # Step-by-step Silver guide
 │       └── Gold Layer docs (MD)       # Step-by-step Gold guide
@@ -328,6 +353,148 @@ gold = GoldLayer.from_config_table("netflix")
 
 ---
 
+## 🚀 Deployment with DABs
+
+This project uses **Databricks Asset Bundles (DABs)** for infrastructure-as-code deployment and orchestration.
+
+### Bundle Configuration
+
+**File**: `databricks.yml`
+
+```yaml
+bundle:
+  name: Netflix dabs
+
+include:
+  - ./Netflix_project/resource_job/*.yml
+
+variables:
+  catalog:
+  root_path:
+    default: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+  package_dependencies:
+    description: "Python dependencies for job environments"
+    default: []
+
+targets:
+  prod:
+    mode: production
+    default: true
+    workspace:
+      root_path: ${var.root_path}
+    artifacts:
+      default:
+        type: whl
+        build: python3 -m build
+        path: ./Netflix_project/logic_packages/
+    variables:
+      catalog: prod
+      package_dependencies:
+        - ./Netflix_project/logic_packages/dist/*.whl
+```
+
+### Job Configuration
+
+**File**: `Netflix_project/resource_job/transform_netflix.yml`
+
+Defines a three-task pipeline with daily scheduling:
+
+```yaml
+resources:
+  jobs:
+    pipeline_job:
+      name: pipline_${bundle.target}
+      
+      trigger:
+        periodic:
+          interval: 1
+          unit: DAYS
+      
+      tasks:
+        - task_key: bronze_task
+          notebook_task:
+            notebook_path: ../bronze_Netflix/bronze_fw_auto_loader_config.ipynb
+            base_parameters:
+              pipeline_name: netflix_auto_loader
+          environment_key: default
+        
+        - task_key: silver_task
+          depends_on:
+            - task_key: bronze_task
+          notebook_task:
+            notebook_path: ../silver_Netflix/silver_fw_config.ipynb
+            base_parameters:
+              pipeline_name: netflix
+          environment_key: default
+        
+        - task_key: gold_task
+          depends_on:
+            - task_key: silver_task
+          notebook_task:
+            notebook_path: ../gold_Netflix/gold_fw_config.ipynb
+            base_parameters:
+              pipeline_name: netflix
+          environment_key: default
+      
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies: ${var.package_dependencies}
+```
+
+### Python Package Build
+
+The framework is packaged as a Python wheel for reusability:
+
+**File**: `Netflix_project/logic_packages/pyproject.toml`
+
+```toml
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dabs_local_package"
+version = "0.1.0"
+description = "Unified fw"
+
+[tools.setuptools.packages.find]
+where = ["src"]
+```
+
+**Build command**:
+```bash
+cd Netflix_project/logic_packages
+python3 -m build
+```
+
+**Output**: `dist/dabs_local_package-0.1.0-py3-none-any.whl`
+
+### Deployment Commands
+
+```bash
+# Validate bundle configuration
+databricks bundle validate --target prod
+
+# Deploy bundle to workspace
+databricks bundle deploy --target prod
+
+# Run the pipeline job
+databricks bundle run pipeline_job --target prod
+```
+
+### Key Benefits
+
+✅ **Infrastructure as Code**: Version-controlled deployment configuration  
+✅ **Automated Builds**: Python package built and deployed automatically  
+✅ **Environment Management**: Isolated prod environments with dependencies  
+✅ **Task Orchestration**: Bronze → Silver → Gold dependency chain  
+✅ **Scheduled Execution**: Daily automated runs  
+✅ **Reproducibility**: Consistent deployments across environments  
+
+---
+
 ## 📊 Table Schema
 
 ### Main Dimension: `dim_titles_silver`
@@ -454,36 +621,35 @@ gold = GoldLayer.from_config_table("netflix")
 ### Prerequisites
 
 - Databricks workspace with Unity Catalog enabled
-- Access to S3 or cloud storage (for Auto Loader)
-- Python 3.10+ with PySpark
-- Delta Lake 2.0+
+- Databricks CLI installed and configured
+- Access to cloud storage (for Auto Loader)
+- Serverless compute or cluster with Databricks Runtime 14.0+
+- Python 3.10+ with PySpark 3.5+
+- Delta Lake 2.4.0+
 
 ### Setup Steps
 
-#### 1. Create Configuration Table
+#### 1. Clone or Download the Project
 
+```bash
+git clone <your-repo-url>
+cd netflix-data-warehouse-medallion-pipeline
+```
+
+#### 2. Create Table DDL and Configuration
+
+Run the `_ddl_Netflix.ipynb` notebook to:
+- Create Unity Catalog schema (`workspace.netflix`)
+- Create all table definitions (Bronze, Silver, Gold)
+- Initialize the `config_table` with pipeline settings
+- Create Unity Catalog volumes for checkpoints
+
+**Example configuration inserted**:
 ```python
-# Create schema and config table
-spark.sql("CREATE SCHEMA IF NOT EXISTS workspace.netflix")
-
-spark.sql("""
-CREATE TABLE IF NOT EXISTS workspace.netflix.config_table (
-    pipeline_name STRING,
-    file_path STRING,
-    header BOOLEAN,
-    delimiter STRING,
-    table_name STRING,
-    schema_detail MAP<STRING, STRING>,
-    keys ARRAY<STRING>,
-    write_mode STRING
-)
-""")
-
-# Insert Netflix pipeline configuration
 spark.sql("""
 INSERT INTO workspace.netflix.config_table VALUES (
     'netflix',
-    's3://your-bucket/netflix/',  -- or file path
+    '/Volumes/workspace/netflix/source_data/',  -- or S3 path
     true,
     ',',
     'netflix',
@@ -507,31 +673,56 @@ INSERT INTO workspace.netflix.config_table VALUES (
 """)
 ```
 
-#### 2. Run Bronze Layer
+#### 3. Build the Python Package
 
+```bash
+cd Netflix_project/logic_packages
+python3 -m build
+# Output: dist/dabs_local_package-0.1.0-py3-none-any.whl
+```
+
+#### 4. Deploy with DABs
+
+```bash
+# Validate bundle
+databricks bundle validate --target prod
+
+# Deploy to workspace
+databricks bundle deploy --target prod
+
+# Run the pipeline
+databricks bundle run pipeline_job --target prod
+```
+
+#### 5. Alternative: Manual Notebook Execution
+
+If not using DABs, run notebooks manually in order:
+
+**Bronze Layer**:
 ```python
-# Option A: Batch Mode (one-time load)
-bronze = BronzeLayer.from_config_table("netflix")
-raw_df = bronze.read_from_file()
-bronze.load_to_bronze_table(raw_df)
+# Run: Netflix_project/bronze_Netflix/bronze_fw_auto_loader_config.ipynb
+from unified_fw.fw import BronzeLayer
 
-# Option B: Streaming Mode (Auto Loader)
-bronze = BronzeLayer.from_config_table("netflix")
+bronze = BronzeLayer.from_config_table("netflix_auto_loader")
 bronze.s3_auto_loader(checkpoint_location="/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze/")
 ```
 
-#### 3. Run Silver Layer
-
+**Silver Layer**:
 ```python
+# Run: Netflix_project/silver_Netflix/silver_fw_config.ipynb
+from unified_fw.fw import SilverLayer
+
 silver = SilverLayer.from_config_table("netflix")
 silver.process_cdf_stream_to_silver(
     checkpoint_location="/Volumes/workspace/netflix/checkpoint_dir/netflix_silver/"
 )
 ```
 
-#### 4. Run Gold Layer
-
+**Gold Layer**:
 ```python
+# Run: Netflix_project/gold_Netflix/gold_fw_config.ipynb
+from unified_fw.fw import GoldLayer
+
 gold = GoldLayer.from_config_table("netflix")
 gold.run_gold_pipeline()
 ```
@@ -573,15 +764,38 @@ schema_location = "/Volumes/workspace/netflix/checkpoint_dir/netflix_bronze_sche
 
 ## 🧪 Testing
 
-The project includes a comprehensive test suite in `silver_unit_test.py` that validates:
+The project includes comprehensive test suites in the `Netflix_project/Testing/` folder:
 
-* ✅ **Data Quality Pipeline** - 8-stage validation checks
-* ✅ **Star Schema Structure** - 9-table creation (1 main + 4 sub-dimensions + 4 bridges)
-* ✅ **SCD Type 2** - Historical change tracking
+### Test Files
+
+**1. Silver Layer Tests** (`silver_unit_test.py`):
+* ✅ **Data Quality Pipeline** - Multi-stage validation checks
+* ✅ **Star Schema Structure** - 9-table creation verification
+* ✅ **SCD Type 2** - Historical change tracking validation
 * ✅ **Bad Record Handling** - Quarantine and audit trail
 * ✅ **Incremental Processing** - CDF-based streaming
 
-For detailed test execution instructions, refer to the test file documentation.
+**2. Gold Layer Tests** (`gold_unit_test.py`):
+* ✅ **Aggregation Correctness** - Verify business metrics
+* ✅ **Denormalization Logic** - Join integrity checks
+* ✅ **Active Record Filtering** - SCD Type 2 filtering
+* ✅ **Data Freshness** - Reflects latest Silver state
+
+### Running Tests
+
+```python
+# Run in a Databricks notebook with Serverless compute
+import sys
+sys.path.append("/Workspace/Users/<your-email>/netflix-data-warehouse-medallion-pipeline/Netflix_project/logic_packages/src")
+
+# Run Silver tests
+%run ./Netflix_project/Testing/silver_unit_test.py
+
+# Run Gold tests
+%run ./Netflix_project/Testing/gold_unit_test.py
+```
+
+For detailed test execution instructions, refer to `Netflix_project/Testing/README_gold_unit_test.md`.
 
 ---
 
@@ -909,16 +1123,34 @@ tests.test_scd_type2_change_detection()
 
 ### Documentation
 
+- [Databricks Asset Bundles (DABs)](https://docs.databricks.com/dev-tools/bundles/)
 - [Databricks Medallion Architecture](https://www.databricks.com/glossary/medallion-architecture)
 - [Databricks Auto Loader](https://docs.databricks.com/ingestion/auto-loader/index.html)
 - [Delta Lake Documentation](https://docs.delta.io/)
 - [Change Data Feed Guide](https://docs.databricks.com/delta/delta-change-data-feed.html)
 - [SCD Type 2 Best Practices](https://www.databricks.com/blog/2022/08/22/dimensional-modeling-delta-lake.html)
+- [Unity Catalog](https://docs.databricks.com/data-governance/unity-catalog/)
+- [Spark Connect Serverless](https://docs.databricks.com/compute/serverless.html)
 
-### Related Files
+### Project Files
 
-- `framework` - Main pipeline implementation notebook (BronzeLayer, SilverLayer, GoldLayer)
-- `silver_unit_test.py` - Comprehensive unit test suite
+**Core Framework**:
+- `Netflix_project/logic_packages/src/unified_fw/fw.py` - Main framework classes
+- `Netflix_project/logic_packages/pyproject.toml` - Package configuration
+
+**DABs Configuration**:
+- `databricks.yml` - Bundle configuration
+- `Netflix_project/resource_job/transform_netflix.yml` - Job definition
+
+**Notebooks**:
+- `Netflix_project/_ddl_Netflix.ipynb` - Table DDL definitions
+- `Netflix_project/bronze_Netflix/bronze_fw_auto_loader_config.ipynb` - Bronze layer
+- `Netflix_project/silver_Netflix/silver_fw_config.ipynb` - Silver layer
+- `Netflix_project/gold_Netflix/gold_fw_config.ipynb` - Gold layer
+
+**Testing**:
+- `Netflix_project/Testing/silver_unit_test.py` - Silver layer tests
+- `Netflix_project/Testing/gold_unit_test.py` - Gold layer tests
 
 ### Support
 
@@ -926,44 +1158,54 @@ For questions or issues:
 1. Review the troubleshooting section above
 2. Check test results for error details
 3. Examine bad record table for data quality issues
-4. Consult Databricks documentation
+4. Review bundle validation output
+5. Consult Databricks documentation
 
 ---
 
 ## 📝 License
 
-This project is part of the **Databricks for Data Engineers Bootcamp** training program.
+This project is an educational implementation of a production-ready data warehouse.
 
 ---
 
 ## 🎉 Acknowledgments
 
-**Built with**:
-- Databricks Unified Analytics Platform
-- Apache Spark 3.x
-- Delta Lake with Change Data Feed
-- Python 3.10+ with dataclasses
-- Databricks Auto Loader
+**Tech Stack**:
+- 🟦 Databricks Unified Analytics Platform
+- ⚡ Apache Spark 3.5+ (PySpark)
+- 🟦 Delta Lake 2.4+ with Change Data Feed
+- 🐍 Python 3.10+ with dataclasses
+- 📚 Databricks Auto Loader (Cloud Files)
+- 📦 Databricks Asset Bundles (DABs)
+- ☁️ Spark Connect Serverless Compute
+- 🛡️ Unity Catalog for data governance
 
-**Architecture**:
-- Medallion Architecture (Bronze/Silver/Gold)
-- Star Schema Design (1+4+4 pattern)
-- SCD Type 2 Implementation
-- Hash-based CDC
+**Architecture Patterns**:
+- 🏛️ Medallion Architecture (Bronze/Silver/Gold)
+- ⭐ Star Schema Design (1 main + 4 sub-dimensions + 4 bridges)
+- 🔄 SCD Type 2 Implementation
+- #️⃣ Hash-based Change Detection (SHA-256)
+- 🔀 Incremental Processing with Change Data Feed
 
 **Key Features**:
-- Configurable dataclass-based framework
-- 8-stage data quality pipeline
-- Incremental processing with CDF
-- Production-scale testing
-- Performance benchmarking
+- ⚙️ Configurable dataclass-based framework
+- ✅ Multi-stage data quality pipeline
+- 📦 Packaged as reusable Python wheel
+- 🚀 Infrastructure-as-code with DABs
+- 🔄 Automated daily orchestration
+- 🧪 Comprehensive test coverage
+- 📊 Production-ready monitoring
 
 ---
 
-**Last Updated**: January 2026  
-**Version**: 2.0  
-**Status**: Production Ready ✅
+**Project**: Netflix Data Warehouse - Medallion Pipeline  
+**Last Updated**: January 2025  
+**Version**: 1.0.0  
+**Status**: Production Ready ✅  
+**Framework Package**: `dabs_local_package v0.1.0`
 
 ---
 
+*Built with ❤️ using Databricks and Delta Lake*  
 *Happy Data Engineering! 🚀*

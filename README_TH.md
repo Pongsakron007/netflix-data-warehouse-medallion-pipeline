@@ -1,11 +1,12 @@
-# 🎬 Netflix Data Engineering Pipeline (ไปป์ไลน์วิศวกรรมข้อมูล Netflix)
+# 🎬 Netflix Data Warehouse - Medallion Pipeline (คลังข้อมูล Netflix)
 
-> **ไปป์ไลน์ข้อมูลพร้อมใช้งานจริงที่ใช้สถาปัตยกรรม Medallion (Bronze → Silver → Gold) สำหรับการวิเคราะห์เนื้อหา Netflix**
+> **คลังข้อมูลพร้อมใช้งานจริงที่ใช้สถาปัตยกรรม Medallion (Bronze → Silver → Gold) สำหรับการวิเคราะห์เนื้อหา Netflix สร้างด้วย Databricks Asset Bundles (DABs)**
 
 [![Databricks](https://img.shields.io/badge/Databricks-FF3621?style=flat&logo=databricks&logoColor=white)](https://databricks.com)
 [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat&logo=apachespark&logoColor=white)](https://spark.apache.org)
 [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-00ADD8?style=flat&logo=delta&logoColor=white)](https://delta.io)
 [![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![DABs](https://img.shields.io/badge/DABs-Enabled-blue)](https://docs.databricks.com/dev-tools/bundles/)
 
 ---
 
@@ -15,15 +16,12 @@
 - [สถาปัตยกรรม](#สถาปัตยกรรม)
 - [โครงสร้างโปรเจค](#โครงสร้างโปรเจค)
 - [ส่วนประกอบของไปป์ไลน์](#ส่วนประกอบของไปป์ไลน์)
-- [โครงสร้างตาราง](#โครงสร้างตาราง)
+- [การติดตั้งด้วย DABs](#การติดตั้งด้วย-dabs)
 - [เริ่มต้นใช้งาน](#เริ่มต้นใช้งาน)
 - [การตั้งค่า](#การตั้งค่า)
 - [ระบบทดสอบ](#ระบบทดสอบ)
 - [ตัวอย่างการใช้งาน](#ตัวอย่างการใช้งาน)
-- [ประสิทธิภาพ](#ประสิทธิภาพ)
-- [แนวทางปฏิบัติที่ดี](#แนวทางปฏิบัติที่ดี)
 - [การแก้ไขปัญหา](#การแก้ไขปัญหา)
-- [การมีส่วนร่วม](#การมีส่วนร่วม)
 
 ---
 
