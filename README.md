@@ -1,6 +1,6 @@
 # 🎬 Netflix Data Warehouse - Medallion Pipeline
 
-> **A production-ready data warehouse implementing the Medallion Architecture (Bronze → Silver → Gold) for Netflix content analysis, built with Databricks Asset Bundles (DABs)**
+> **A production-oriented data warehouse implementing the Medallion Architecture (Bronze → Silver → Gold) for Netflix content analysis, built with Databricks Asset Bundles (DABs)**
 
 [![Databricks](https://img.shields.io/badge/Databricks-FF3621?style=flat&logo=databricks&logoColor=white)](https://databricks.com)
 [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat&logo=apachespark&logoColor=white)](https://spark.apache.org)
@@ -27,7 +27,7 @@
 
 ## 🎯 Overview
 
-This project implements a **production-ready data warehouse** for processing Netflix content data using Databricks and the **Medallion Architecture**. Built as a **reusable Python package** with **Databricks Asset Bundles (DABs)**, the framework provides a configurable, dataclass-based approach to building ETL pipelines that ingest raw data, apply comprehensive data quality validation, and transform it into a **star schema** optimized for analytics and business intelligence.
+This project implements a **production-oriented data warehouse** for processing Netflix content data using Databricks and the **Medallion Architecture**. Built as a **reusable Python package** with **Databricks Asset Bundles (DABs)**, the framework provides a configurable, dataclass-based approach to building ETL pipelines that ingest raw data, apply comprehensive data quality validation, and transform it into a **star schema** optimized for analytics and business intelligence.
 
 ### Key Features
 
@@ -1165,7 +1165,7 @@ For questions or issues:
 
 ## 📝 License
 
-This project is an educational implementation of a production-ready data warehouse.
+This project is an educational implementation of a production-oriented data warehouse.
 
 ---
 
@@ -1195,14 +1195,14 @@ This project is an educational implementation of a production-ready data warehou
 - 🚀 Infrastructure-as-code with DABs
 - 🔄 Automated daily orchestration
 - 🧪 Comprehensive test coverage
-- 📊 Production-ready monitoring
+- 📊 production-oriented monitoring
 
 ---
 
 **Project**: Netflix Data Warehouse - Medallion Pipeline  
 **Last Updated**: January 2025  
 **Version**: 1.0.0  
-**Status**: Production Ready ✅  
+**Status**: production-oriented Ready ✅  
 **Framework Package**: `dabs_local_package v0.1.0`
 
 ---
