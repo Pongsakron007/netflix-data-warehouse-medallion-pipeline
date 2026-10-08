@@ -7,5 +7,5 @@ name = "dabs_local_package"
 version = "0.1.0"
 description = "Unified fw"
 
-[tools.setuptools.packages.find]
+[tool.setuptools.packages.find]
 where = ["src"]

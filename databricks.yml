@@ -31,7 +31,7 @@ targets:
     artifacts:
       default:
         type: whl
-        build: python3 -m build
+        build: pip wheel . --no-deps -w dist/
         path: ./Netflix_project/logic_packages/
     variables:
       catalog: prod

@@ -404,22 +404,67 @@ class SilverLayer:
     # Get hash key and value logic.
     def get_hash_key_value(self, final_df: DataFrame) -> DataFrame:
         '''
-        Add hash key and hash value to final result for more efficient join later.
+        Add hash_key, hash_value, and title_version_sk to final_df.
+
+        hash_key:       deterministic entity identity (from show_id)
+        hash_value:     deterministic content state hash (includes normalized relationship columns)
+        title_version_sk: deterministic content-version identifier (sha2 of hash_key + hash_value)
+
+        This method does NOT drop any columns — callers select what they need.
+        The explode columns and _sk remain for bridge table usage.
+
+        title_version_sk represents the logical content state, NOT a unique physical row.
+        V1 -> V2 -> V1 is acceptable: the same content state produces the same title_version_sk.
+        SCD2 temporal columns (start_date, end_date, active_flag) distinguish temporal occurrences.
         '''
-        # These column use to explode so we don't use them in the hash key
         columns_to_explode = ["cast", "director", "country", "listed_in"]
-        columns_to_hash = [col_name for col_name in self.data_col 
+        columns_to_hash = [col_name for col_name in self.data_col
                            if col_name not in self.keys and col_name not in columns_to_explode]
-        # Create hash key and hash value
+
+        # Normalize relationship columns: split -> trim -> initcap -> filter empty -> sort -> join
+        # This makes the hash order-independent while remaining set-sensitive.
+        # Normalization is consistent with the bridge table logic (_transform_and_explode_bridge).
+        df_with_normalized = final_df
+        normalized_col_names = []
+        for col_name in columns_to_explode:
+            if col_name in final_df.columns:
+                normalized_alias = f"_{col_name}_normalized"
+                normalized_col_names.append(normalized_alias)
+                df_with_normalized = df_with_normalized.withColumn(
+                    normalized_alias,
+                    array_join(
+                        array_sort(
+                            transform(
+                                filter(
+                                    split(col(col_name), ","),
+                                    lambda x: trim(x) != ""
+                                ),
+                                lambda x: initcap(trim(x))
+                            )
+                        ),
+                        ","
+                    )
+                )
+
+        # Build hash_value: existing scalar columns + normalized relationship columns
+        hash_value_cols = [col(value) for value in columns_to_hash]
+        for col_name in columns_to_explode:
+            normalized_alias = f"_{col_name}_normalized"
+            if normalized_alias in df_with_normalized.columns:
+                hash_value_cols.append(col(normalized_alias))
+
         df_with_hash = (
-            final_df
+            df_with_normalized
             .withColumn("hash_key", sha2(concat_ws("||", *[col(key) for key in self.keys]), 256))
-            .withColumn("hash_value", sha2(concat_ws("||", *[col(value) for value in columns_to_hash]), 256))
+            .withColumn("hash_value", sha2(concat_ws("||", *hash_value_cols), 256))
+            .withColumn("title_version_sk", sha2(concat_ws("||", col("hash_key"), col("hash_value")), 256))
         )
-        columns_to_drop = columns_to_explode + ["_sk"]
-        # Drop columns we don't need
-        final_main_dimension_df = df_with_hash.drop(*columns_to_drop)
-        return final_main_dimension_df
+
+        # Drop temporary normalized columns
+        if normalized_col_names:
+            df_with_hash = df_with_hash.drop(*normalized_col_names)
+
+        return df_with_hash
 
     # Load bad record logic.
     def load_bad_record(self, all_bad_df: DataFrame, batch_id: int) -> None:
@@ -466,17 +511,17 @@ class SilverLayer:
 
     def _transform_and_explode_bridge(self, final_df: DataFrame, source_col: str, target_col_name: str, id_col_name: str) -> DataFrame:
         """
-        Central method for exploding a bridge column for create bridge tables (Many-to-Many) with _sk
+        Central method for exploding a bridge column for create bridge tables (Many-to-Many) with title_version_sk
         """
         return (
             final_df
-            .select("show_id", "_sk", source_col)
+            .select("show_id", "title_version_sk", source_col)
             .filter(col(source_col).isNotNull())
             .withColumn(target_col_name, explode(split(col(source_col), ",")))
             .withColumn(target_col_name, initcap(trim(col(target_col_name))))
             .filter(col(target_col_name) != "")
             .withColumn(id_col_name, sha2(col(target_col_name), 256))
-            .select("show_id", "_sk", id_col_name)
+            .select("show_id", "title_version_sk", id_col_name)
         )
 
     def load_sub_dimensions(self, final_df: DataFrame, batch_id: int = None) -> None:
@@ -508,7 +553,7 @@ class SilverLayer:
     def load_bridge_tables(self, final_df: DataFrame, batch_id: int = None) -> None:
         """
         Load data into 4 bridge tables (title_cast, title_director, title_country, title_category).
-        Bridge tables handle many-to-many relationships using _sk and dimension IDs.
+        Bridge tables handle many-to-many relationships using title_version_sk and dimension IDs.
         """
         configs = [
             ("cast", "cast_name", "cast_id", f"{self.table_prefix}bridge_title_cast_silver"),
@@ -524,7 +569,7 @@ class SilverLayer:
             bridge_df = self._transform_and_explode_bridge(final_df, src_col, target_name, id_name)
             target_bridge = DeltaTable.forName(self.spark, bridge_table)
             (target_bridge.alias("target")
-             .merge(bridge_df.alias("source"), f"target._sk = source._sk AND target.{id_name} = source.{id_name}")
+             .merge(bridge_df.alias("source"), f"target.title_version_sk = source.title_version_sk AND target.{id_name} = source.{id_name}")
              .whenNotMatchedInsertAll()
              .execute())
             print(f"-> {bridge_table}: Loaded")
@@ -536,18 +581,20 @@ class SilverLayer:
     # MAIN PIPELINE WORKFLOW (ENTRY POINT)
     # ==========================================================================
 
-    def load_to_silver_layer(self, final_df: DataFrame, batch_id: int = None) -> None:
+    def load_to_silver_layer(self, final_df_with_hash: DataFrame, batch_id: int = None) -> None:
         """
         Load data into the main dimension table (dim_titles_silver) with SCD Type 2.
-        This method focuses solely on the main fact/dimension table.
-        Sub-dimensions and bridge tables are handled separately.
-        
+
         Args:
-            final_df: DataFrame with clean data (after quality checks)
+            final_df_with_hash: DataFrame with clean data + hash_key, hash_value, title_version_sk
+                                 (output of get_hash_key_value, called by _process_quality_checks_batch)
             batch_id: The batch number for tracking/logging
         """
-        # Apply hash key transformation (removes _sk and explodable columns)
-        final_df_with_hash = self.get_hash_key_value(final_df)
+        # Drop columns not needed in the main dimension
+        columns_to_explode = ["cast", "director", "country", "listed_in"]
+        columns_to_drop = columns_to_explode + ["_sk", "load_dt", "load_dttm"]
+        columns_to_drop = [c for c in columns_to_drop if c in final_df_with_hash.columns]
+        final_df_for_dim = final_df_with_hash.drop(*columns_to_drop)
         
         batch_msg = f" (Batch {batch_id})" if batch_id is not None else ""
         print(f"\n--- Loading Main Dimension Table{batch_msg} ---")
@@ -561,7 +608,7 @@ class SilverLayer:
         print("-> [SCD Type 2] Step 1: Closing historical changed rows...")
         (target_main_table.alias("target")
          .merge(
-             final_df_with_hash.alias("source"),
+             final_df_for_dim.alias("source"),
              "target.show_id = source.show_id AND target.active_flag = true"
          )
          .whenMatchedUpdate(
@@ -583,19 +630,20 @@ class SilverLayer:
             "show_id": "source.show_id",
             "hash_key": "source.hash_key",
             "hash_value": "source.hash_value",
+            "title_version_sk": "source.title_version_sk",
             "active_flag": "true",
             "start_date": "current_timestamp()",
             "end_date": "cast(null as timestamp)"
         }
         # Add data columns that exist in both source and target
-        data_columns_in_target = ["type", "title", "release_year", "rating", "duration", "description"]
+        data_columns_in_target = ["type", "title", "date_added", "release_year", "rating", "duration", "description"]
         for col_name in data_columns_in_target:
-            if col_name in final_df_with_hash.columns:
+            if col_name in final_df_for_dim.columns:
                 insert_values[col_name] = f"source.{col_name}"
 
         (target_main_table.alias("target")
          .merge(
-             final_df_with_hash.alias("source"),
+             final_df_for_dim.alias("source"),
              "target.hash_key = source.hash_key AND target.active_flag = true"
          )
          .whenNotMatchedInsert(values = insert_values)
@@ -663,14 +711,20 @@ class SilverLayer:
         all_bad_df = self.get_all_bad_record(invalid_df, key_null_df, invalid_show_id_df, duplicate_df)
         final_df = self.get_final_result(change_data_type_stream, all_bad_df)
 
-        # Load DataFrame into 4 sub-dimension and 4 bridge tables
-        # Note: Use original final_df (with _sk) for bridge tables
+        # Compute hash columns and title_version_sk (for both dimension and bridge tables)
+        final_df_with_hash = self.get_hash_key_value(final_df)
+
+        # Load sub-dimensions (independent — no version key needed)
         self.load_sub_dimensions(final_df, batch_id)
-        self.load_bridge_tables(final_df, batch_id)
-        
-        # Load DataFrame into main dimension table and bad record table
+
+        # Load bad records (independent audit table)
         self.load_bad_record(all_bad_df, batch_id)
-        self.load_to_silver_layer(final_df, batch_id)
+
+        # Load main SCD2 dimension FIRST (ensures title_version_sk exists before bridge references it)
+        self.load_to_silver_layer(final_df_with_hash, batch_id)
+
+        # Load bridge tables SECOND (references title_version_sk from the dimension)
+        self.load_bridge_tables(final_df_with_hash, batch_id)
         
         batch_msg = f" (Batch {batch_id})" if batch_id is not None else ""
         print("==================================================")
@@ -732,10 +786,11 @@ class GoldLayer():
         # Join all three tables
         flattened_cast_df = (
             title_active_df.alias("t")
-            .join(bridge_cast_df.alias("b"), col("t.show_id") == col("b.show_id"), "inner")
+            .join(bridge_cast_df.alias("b"), col("t.title_version_sk") == col("b.title_version_sk"), "inner")
             .join(cast_df.alias("c"), col("b.cast_id") == col("c.cast_id"), "inner")
             .drop(col("b.cast_id")) # Drop duplicate cast_id from bridge table
-            .drop(col("t.show_id")) # Drop duplicate show_id from bridge table
+            .drop(col("b.title_version_sk")) # Drop duplicate title_version_sk from bridge table
+            .drop(col("b.show_id")) # Drop duplicate show_id from bridge table
         )
 
         # Write to gold table name "gold_table_content_by_cast"

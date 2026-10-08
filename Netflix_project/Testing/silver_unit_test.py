@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch, MagicMock
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, DateType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, BooleanType, DateType
 from pyspark.sql.functions import col, count, collect_list, flatten, trim, coalesce, lit, expr, array
 from pyspark.sql.functions import current_date, current_timestamp, sha2, concat_ws, explode, split, initcap
 from pyspark.sql.functions import row_number, monotonically_increasing_id
@@ -572,6 +572,274 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         pass
 
 
+class TestHashAndVersionKeys(unittest.TestCase):
+    """Tests for relationship-aware hash_value, title_version_sk determinism, and bridge/Gold logic."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Set up Spark session once for all tests."""
+        cls.spark = SparkSession.getActiveSession()
+        if cls.spark is None:
+            builder = (
+                SparkSession.builder
+                .appName("HashAndVersionKeyTests")
+                .master("local[*]")
+                .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+                .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            )
+            cls.spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
+    def setUp(self):
+        """Set up full production schema for hash/version tests."""
+        self.full_schema = {
+            "show_id": "string",
+            "type": "string",
+            "title": "string",
+            "director": "string",
+            "cast": "string",
+            "country": "string",
+            "date_added": "date",
+            "release_year": "integer",
+            "rating": "string",
+            "duration": "string",
+            "listed_in": "string",
+            "description": "string"
+        }
+        self.keys = ["show_id"]
+        self.silver = SilverLayer(
+            table_name="test",
+            schema_detail=self.full_schema,
+            keys=self.keys,
+            write_mode="overwrite",
+            spark=self.spark,
+            table_prefix=""
+        )
+
+    def _create_test_df(self, rows):
+        """Create a DataFrame with all 12 production columns + _sk as LongType."""
+        schema = StructType([
+            StructField("show_id", StringType(), True),
+            StructField("type", StringType(), True),
+            StructField("title", StringType(), True),
+            StructField("director", StringType(), True),
+            StructField("cast", StringType(), True),
+            StructField("country", StringType(), True),
+            StructField("date_added", StringType(), True),
+            StructField("release_year", StringType(), True),
+            StructField("rating", StringType(), True),
+            StructField("duration", StringType(), True),
+            StructField("listed_in", StringType(), True),
+            StructField("description", StringType(), True),
+            StructField("_sk", LongType(), True)
+        ])
+        return self.spark.createDataFrame(rows, schema)
+
+    def _get_hash_value(self, df):
+        """Helper: extract hash_value for the first row."""
+        result = self.silver.get_hash_key_value(df)
+        return result.select("hash_value").first()["hash_value"]
+
+    def _get_title_version_sk(self, df):
+        """Helper: extract title_version_sk for the first row."""
+        result = self.silver.get_hash_key_value(df)
+        return result.select("title_version_sk").first()["title_version_sk"]
+
+    def test_relationship_columns_in_hash_value(self):
+        """cast/director/country/listed_in changes must produce different hash_value."""
+        row_v1 = ("s1", "Movie", "Test", "Dir A", "Tom, John", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "Desc", 1)
+        row_v2 = ("s1", "Movie", "Test", "Dir A", "Tom, Sarah", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "Desc", 2)
+        self.assertNotEqual(
+            self._get_hash_value(self._create_test_df([row_v1])),
+            self._get_hash_value(self._create_test_df([row_v2]))
+        )
+
+    def test_cast_ordering_no_change(self):
+        """Reordering cast members should not change hash_value."""
+        row_a = ("s1", "Movie", "T", "D", "Tom, John, Mike", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_b = ("s1", "Movie", "T", "D", "Mike, Tom, John", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertEqual(
+            self._get_hash_value(self._create_test_df([row_a])),
+            self._get_hash_value(self._create_test_df([row_b]))
+        )
+
+    def test_director_ordering_no_change(self):
+        """Reordering directors should not change hash_value."""
+        row_a = ("s1", "Movie", "T", "Tom, John, Mike", "Cast", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_b = ("s1", "Movie", "T", "Mike, Tom, John", "Cast", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertEqual(
+            self._get_hash_value(self._create_test_df([row_a])),
+            self._get_hash_value(self._create_test_df([row_b]))
+        )
+
+    def test_country_ordering_no_change(self):
+        """Reordering countries should not change hash_value."""
+        row_a = ("s1", "Movie", "T", "D", "Cast", "USA, UK, France",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_b = ("s1", "Movie", "T", "D", "Cast", "France, USA, UK",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertEqual(
+            self._get_hash_value(self._create_test_df([row_a])),
+            self._get_hash_value(self._create_test_df([row_b]))
+        )
+
+    def test_listed_in_ordering_no_change(self):
+        """Reordering listed_in categories should not change hash_value."""
+        row_a = ("s1", "Movie", "T", "D", "Cast", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama, Comedy, Action", "X", 1)
+        row_b = ("s1", "Movie", "T", "D", "Cast", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Action, Drama, Comedy", "X", 2)
+        self.assertEqual(
+            self._get_hash_value(self._create_test_df([row_a])),
+            self._get_hash_value(self._create_test_df([row_b]))
+        )
+
+    def test_adding_member_changes_hash(self):
+        """Adding a relationship member should change hash_value."""
+        row_v1 = ("s1", "Movie", "T", "D", "Tom, John", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_v2 = ("s1", "Movie", "T", "D", "Tom, John, Mike", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertNotEqual(
+            self._get_hash_value(self._create_test_df([row_v1])),
+            self._get_hash_value(self._create_test_df([row_v2]))
+        )
+
+    def test_removing_member_changes_hash(self):
+        """Removing a relationship member should change hash_value."""
+        row_v1 = ("s1", "Movie", "T", "D", "Tom, John, Mike", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_v2 = ("s1", "Movie", "T", "D", "Tom, John", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertNotEqual(
+            self._get_hash_value(self._create_test_df([row_v1])),
+            self._get_hash_value(self._create_test_df([row_v2]))
+        )
+
+    def test_empty_values_filtered(self):
+        """Extra commas producing empty strings should not affect the hash."""
+        row_a = ("s1", "Movie", "T", "D", "Tom, John", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_b = ("s1", "Movie", "T", "D", "Tom, , John", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertEqual(
+            self._get_hash_value(self._create_test_df([row_a])),
+            self._get_hash_value(self._create_test_df([row_b]))
+        )
+
+    def test_same_set_different_order_same_hash(self):
+        """All relationship columns reordered should produce the same hash_value."""
+        row_a = ("s1", "Movie", "T", "Dir A, Dir B", "Tom, John", "USA, UK",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama, Comedy", "X", 1)
+        row_b = ("s1", "Movie", "T", "Dir B, Dir A", "John, Tom", "UK, USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Comedy, Drama", "X", 2)
+        self.assertEqual(
+            self._get_hash_value(self._create_test_df([row_a])),
+            self._get_hash_value(self._create_test_df([row_b]))
+        )
+
+    def test_title_version_sk_deterministic(self):
+        """Same content should always produce the same title_version_sk."""
+        row = ("s1", "Movie", "T", "D", "Tom, John", "USA",
+               "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        df = self._create_test_df([row])
+        sk1 = self._get_title_version_sk(df)
+        sk2 = self._get_title_version_sk(df)
+        self.assertEqual(sk1, sk2)
+
+    def test_title_version_sk_same_across_different_sk(self):
+        """title_version_sk must be the same even when ephemeral _sk differs."""
+        row_a = ("s1", "Movie", "T", "D", "Tom, John", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 100)
+        row_b = ("s1", "Movie", "T", "D", "Tom, John", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 999)
+        self.assertEqual(
+            self._get_title_version_sk(self._create_test_df([row_a])),
+            self._get_title_version_sk(self._create_test_df([row_b]))
+        )
+
+    def test_content_change_different_title_version_sk(self):
+        """A scalar content change should produce a different title_version_sk."""
+        row_v1 = ("s1", "Movie", "Title A", "D", "Tom, John", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_v2 = ("s1", "Movie", "Title B", "D", "Tom, John", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertNotEqual(
+            self._get_title_version_sk(self._create_test_df([row_v1])),
+            self._get_title_version_sk(self._create_test_df([row_v2]))
+        )
+
+    def test_different_entity_different_sk(self):
+        """Different show_ids should produce different title_version_sk."""
+        row_a = ("s1", "Movie", "T", "D", "Tom", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_b = ("s2", "Movie", "T", "D", "Tom", "USA",
+                 "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertNotEqual(
+            self._get_title_version_sk(self._create_test_df([row_a])),
+            self._get_title_version_sk(self._create_test_df([row_b]))
+        )
+
+    def test_relationship_only_change_new_version(self):
+        """A relationship-only change (scalars unchanged) should produce a different title_version_sk."""
+        row_v1 = ("s1", "Movie", "T", "D", "Tom, John", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_v2 = ("s1", "Movie", "T", "D", "Tom, Sarah", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertNotEqual(
+            self._get_title_version_sk(self._create_test_df([row_v1])),
+            self._get_title_version_sk(self._create_test_df([row_v2]))
+        )
+
+    def test_hash_method_preserves_columns(self):
+        """get_hash_key_value should NOT drop explode columns or _sk."""
+        row = ("s1", "Movie", "T", "D", "Tom", "USA",
+               "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        df = self._create_test_df([row])
+        result = self.silver.get_hash_key_value(df)
+        cols = result.columns
+        for c in ["show_id", "type", "title", "director", "cast", "country",
+                  "date_added", "release_year", "rating", "duration", "listed_in",
+                  "description", "_sk"]:
+            self.assertIn(c, cols)
+        for c in ["hash_key", "hash_value", "title_version_sk"]:
+            self.assertIn(c, cols)
+
+    def test_title_version_sk_formula(self):
+        """title_version_sk should equal sha2(concat_ws('||', hash_key, hash_value), 256)."""
+        row = ("s1", "Movie", "T", "D", "Tom", "USA",
+               "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        df = self._create_test_df([row])
+        result = self.silver.get_hash_key_value(df)
+        row_data = result.select("hash_key", "hash_value", "title_version_sk").first()
+        expected_df = self.spark.createDataFrame(
+            [(row_data["hash_key"], row_data["hash_value"])],
+            ["hash_key", "hash_value"]
+        ).withColumn("expected_sk", sha2(concat_ws("||", col("hash_key"), col("hash_value")), 256))
+        expected_sk = expected_df.select("expected_sk").first()["expected_sk"]
+        self.assertEqual(row_data["title_version_sk"], expected_sk)
+
+    def test_date_added_in_hash_and_preserved(self):
+        """date_added should be in the hash and preserved in the output of get_hash_key_value."""
+        row_v1 = ("s1", "Movie", "T", "D", "Tom", "USA",
+                  "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+        row_v2 = ("s1", "Movie", "T", "D", "Tom", "USA",
+                  "February 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+        self.assertNotEqual(
+            self._get_hash_value(self._create_test_df([row_v1])),
+            self._get_hash_value(self._create_test_df([row_v2]))
+        )
+        # date_added column should still be in the result
+        result = self.silver.get_hash_key_value(self._create_test_df([row_v1]))
+        self.assertIn("date_added", result.columns)
+
+
 if __name__ == '__main__':
     # Run tests with verbosity
-    unittest.main(verbosity=2)
+    # Use explicit argv to avoid Databricks notebook path being interpreted as a test module
+    unittest.main(argv=['dummy'], verbosity=2, exit=False)

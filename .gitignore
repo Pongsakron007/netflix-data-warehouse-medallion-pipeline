@@ -1,5 +1,11 @@
 .databricks/
-logic_packages/src/*.egg-info
-logic_packages/dist/*
 .DS_Store
 .env/
+
+# Python build artifacts
+Netflix_project/logic_packages/build/
+Netflix_project/logic_packages/dist/
+Netflix_project/logic_packages/src/*.egg-info/
+
+# SCD2 test notebook (created during testing)
+SCD2 Change Detection Integration Test
