@@ -167,6 +167,9 @@ Databricks-for-Data-Engineers-Bootcamp2/
 │       ├── เอกสาร Bronze (MD)         # คู่มือ Bronze แบบทีละขั้นตอน
 │       ├── เอกสาร Silver (MD)         # คู่มือ Silver แบบทีละขั้นตอน
 │       └── เอกสาร Gold (MD)           # คู่มือ Gold แบบทีละขั้นตอน
+│   │
+│   ├── run_process_all/               # การจัดการไปป์ไลน์ทั้งหมด
+│   │   └── run_auto_loader_process.ipynb  # Bronze → Silver → Gold (3 เซลล์แยกกัน)
 │
 ├── silver_unit_test.py                  # ชุดทดสอบหน่วยครอบคลุม
 │   ├── คลาส SilverLayerTests           # วิธีทดสอบอัตโนมัติ 5 วิธี
@@ -921,6 +924,32 @@ tests = SilverLayerTests(...)
 tests.test_scd_type2_change_detection()
 ```
 
+#### ปัญหา 7: โนตบุ๊ค `run_auto_loader_process` ใช้เวลานานหรือค้าง
+
+**อาการ**: การรันโนตบุ๊ค `run_auto_loader_process.ipynb` ใช้เวลานานมาก และในที่สุดแสดงข้อผิดพลาด `CANCELED: Run cancelled by user`
+
+**สาเหตุหลัก**: โนตบุ๊คเดิมวางการเรียก `dbutils.notebook.run()` ทั้งสามขั้น (Bronze, Silver, Gold) ไว้ใน**เซลล์เดียว** ทำให้เกิดปัญหา 2 ประการ:
+
+1. **ไม่เห็นว่าแต่ละขั้นทำงานอย่างไร**: เมื่อไปป์ไลน์ดูเหมือนค้าง ไม่สามารถระบุได้ว่าขั้นไหน (Bronze Auto Loader, Silver CDF stream, Gold aggregation) เป็นคอขวด เพราะทั้งสามทำงานเป็นบล็อกเดียว
+2. **ไม่สามารถกู้คืนจากข้อผิดพลาดได้**: หากขั้น Bronze สำเร็จแต่ Silver ล้มเหลวหรือถูกยกเลิก ต้องรันเซลล์ทั้งหมดใหม่ตั้งแต่ต้น
+
+**ปัจจัยเพิ่มเติม — ข้อมูลซ้ำใน Bronze**: บักเก็ต S3 ต้นทาง (`s3://netflix-databrick-project/`) มี**ไฟล์ CSV 3 ไฟล์** ทำให้ Auto Loader รับข้อมูล **17,661 แถว** (มี `show_id` ที่ไม่ซ้ำกันเพียง 8,809 ค่า) ส่งผลให้ปริมาณ CDF events ที่ชั้น Silver ต้องประมวลผลเพิ่มเป็นสองเท่า
+
+**การแก้ไขที่ทำ**: แยกเซลล์เดียวออกเป็น**สามเซลล์แยกกัน** (Stage 1/3: Bronze, Stage 2/3: Silver, Stage 3/3: Gold) แต่ละเซลล์มีการแสดงความคืบหน้าชัดเจนด้วยคำสั่ง print
+
+**ผลประโยชน์ของการแก้ไข**:
+- ✅ **เห็นแต่ละขั้น**: คำสั่ง print แสดงชัดเจนว่าขั้นไหนกำลังทำงานและใช้เวลานานเท่าไร
+- ✅ **รันอิสระ**: แต่ละขั้นสามารถรันแยกกันเพื่อดีบักได้
+- ✅ **กู้คืนจากข้อผิดพลาด**: หากขั้นใดขั้นหนึ่งล้มเหลว ต้องรันเพียงขั้นนั้นใหม่
+- ✅ **Checkpoint ทนทาน**: เมื่อรันซ้ำ Bronze Auto Loader และ Silver CDF stream จะไม่พบข้อมูลใหม่ (checkpoint ประมวลผลแล้ว) จึงเสร็จสิ้นในไม่กี่วินาที
+
+**คำแนะนำสำหรับข้อมูลซ้ำ**: เพื่อล้างตาราง Bronze และเริ่มใหม่:
+1. ลบไฟล์ CSV พิเศษออกจาก S3 (เก็บเฉพาะ `netflix_titles.csv`)
+2. ล้างตาราง Bronze: `TRUNCATE TABLE workspace.netflix.netflix_bronze`
+3. ล้าง Auto Loader checkpoint: `dbutils.fs.rm("/Volumes/workspace/netflix/checkpoint_dir/workspace.netflix.netflix_bronze/", recurse=True)`
+4. ล้าง Silver checkpoint: `dbutils.fs.rm("/Volumes/workspace/netflix/checkpoint_dir/workspace.netflix.netflix_silver/", recurse=True)`
+5. รันไปป์ไลน์ใหม่จากเซลล์ 1
+
 ---
 
 ## 🤝 การมีส่วนร่วม
@@ -1006,8 +1035,8 @@ tests.test_scd_type2_change_detection()
 
 ---
 
-**อัปเดตล่าสุด**: มกราคม 2026  
-**เวอร์ชัน**: 2.0  
+**อัปเดตล่าสุด**: ตุลาคม 2026  
+**เวอร์ชัน**: 2.1.0  
 **สถานะ**: พร้อมใช้งาน Production ✅
 
 ---

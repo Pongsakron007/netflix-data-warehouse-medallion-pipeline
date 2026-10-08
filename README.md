@@ -184,6 +184,9 @@ netflix-data-warehouse-medallion-pipeline/
 │   ├── gold_Netflix/                  # Gold layer notebooks
 │   │   └── gold_fw_config.ipynb
 │   │
+│   ├── run_process_all/               # Full pipeline orchestration
+│   │   └── run_auto_loader_process.ipynb  # Bronze → Silver → Gold (3 separate cells)
+│   │
 │   ├── Testing/                       # Unit tests
 │   │   ├── silver_unit_test.py
 │   │   ├── gold_unit_test.py
@@ -1089,6 +1092,56 @@ tests = SilverLayerTests(...)
 tests.test_scd_type2_change_detection()
 ```
 
+#### Issue 7: `run_auto_loader_process` Notebook Takes Too Long or Hangs
+
+**Symptoms**: Running the `run_auto_loader_process.ipynb` notebook results in a very long execution time, eventually showing `CANCELED: Run cancelled by user` error.
+
+**Root Cause**: The notebook originally placed all three `dbutils.notebook.run()` calls (Bronze, Silver, Gold) in a **single cell**. This caused two problems:
+
+1. **No stage visibility**: When the pipeline appeared stuck, there was no way to identify which of the three stages (Bronze Auto Loader, Silver CDF stream, Gold aggregation) was the bottleneck — all three ran as one atomic block.
+2. **No error recovery**: If the Bronze stage succeeded but Silver failed or was cancelled, the entire cell had to be re-run from the beginning, including re-triggering the Bronze Auto Loader.
+
+**Additional Factor — Duplicate Data in Bronze**: The S3 source bucket (`s3://netflix-databrick-project/`) contained **3 CSV files** (`netflix_titles.csv`, `netflix_titles_2.csv`, `netflix_titles_3.csv`), causing the Auto Loader to ingest **17,661 rows** (only 8,809 distinct `show_id` values). This doubled the volume of CDF events that the Silver layer had to process in a single `availableNow=True` micro-batch, significantly increasing the time for quality checks, SCD2 merges, and bridge table operations.
+
+**Fix Applied**: The single cell was split into **three separate cells** (Stage 1/3: Bronze, Stage 2/3: Silver, Stage 3/3: Gold), each with clear progress logging:
+
+```python
+# Cell 1: Bronze Stage
+print("=" * 60)
+print("[Bronze] Starting Auto Loader pipeline...")
+print("=" * 60)
+dbutils.notebook.run(".../bronze_fw_auto_loader_config", 0, {"pipeline_name": "netflix_auto_loader"})
+print("[Bronze] Completed successfully!")
+
+# Cell 2: Silver Stage
+print("=" * 60)
+print("[Silver] Starting CDF stream processing...")
+print("=" * 60)
+dbutils.notebook.run(".../silver_fw_config", 0, {"pipeline_name": "netflix"})
+print("[Silver] Completed successfully!")
+
+# Cell 3: Gold Stage
+print("=" * 60)
+print("[Gold] Starting gold pipeline...")
+print("=" * 60)
+dbutils.notebook.run(".../gold_fw_config", 0, {"pipeline_name": "netflix"})
+print("[Gold] Completed successfully!")
+print("\n✅ Full Medallion Pipeline Complete: Bronze → Silver → Gold")
+```
+
+**Benefits of the Fix**:
+- ✅ **Stage visibility**: Print statements show exactly which stage is running and how long it takes
+- ✅ **Independent execution**: Each stage can be run separately for debugging
+- ✅ **Error recovery**: If one stage fails, only that stage needs to be re-run
+- ✅ **Checkpoint resilience**: On re-runs, the Bronze Auto Loader and Silver CDF stream find no new data (checkpoints already processed), so they complete in seconds
+
+**Recommendation for Duplicate Data**: To clean the bronze table and start fresh:
+1. Remove extra CSV files from S3 (keep only `netflix_titles.csv`)
+2. Truncate the bronze table: `TRUNCATE TABLE workspace.netflix.netflix_bronze`
+3. Clear Auto Loader checkpoint: `dbutils.fs.rm("/Volumes/workspace/netflix/checkpoint_dir/workspace.netflix.netflix_bronze/", recurse=True)`
+4. Clear Silver checkpoint: `dbutils.fs.rm("/Volumes/workspace/netflix/checkpoint_dir/workspace.netflix.netflix_silver/", recurse=True)`
+5. Re-run the pipeline from Cell 1
+
 ---
 
 ## 🤝 Contributing
@@ -1200,8 +1253,8 @@ This project is an educational implementation of a production-oriented data ware
 ---
 
 **Project**: Netflix Data Warehouse - Medallion Pipeline  
-**Last Updated**: January 2025  
-**Version**: 1.0.0  
+**Last Updated**: October 2026  
+**Version**: 2.1.0  
 **Status**: production-oriented Ready ✅  
 **Framework Package**: `dabs_local_package v0.1.0`
 
