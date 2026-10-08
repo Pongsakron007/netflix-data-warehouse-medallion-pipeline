@@ -8,4 +8,4 @@ Netflix_project/logic_packages/dist/
 Netflix_project/logic_packages/src/*.egg-info/
 
 # SCD2 test notebook (created during testing)
-SCD2 Change Detection Integration Test
+SCD2 Change Detection Integration Test.ipynb
