@@ -461,6 +461,148 @@ gold = GoldLayer.from_config_table("netflix")
 
 ---
 
+## 📦 การติดตั้งด้วย DABs
+
+โปรเจคนี้ใช้ **Databricks Asset Bundles (DABs)** สำหรับการปรับใช้แบบ infrastructure-as-code และการจัดการ
+
+### การตั้งค่า Bundle
+
+**ไฟล์**: `databricks.yml`
+
+```yaml
+bundle:
+  name: Netflix dabs
+
+include:
+  - ./Netflix_project/resource_job/*.yml
+
+variables:
+  catalog:
+  root_path:
+    default: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+  package_dependencies:
+    description: "Python dependencies for job environments"
+    default: []
+
+targets:
+  prod:
+    mode: production
+    default: true
+    workspace:
+      root_path: ${var.root_path}
+    artifacts:
+      default:
+        type: whl
+        build: pip wheel . --no-deps -w dist/
+        path: ./Netflix_project/logic_packages/
+    variables:
+      catalog: prod
+      package_dependencies:
+        - ./Netflix_project/logic_packages/dist/*.whl
+```
+
+### การตั้งค่า Job
+
+**ไฟล์**: `Netflix_project/resource_job/transform_netflix.yml`
+
+กำหนดไปป์ไลน์สามงานพร้อมการจัดตารางรายวัน:
+
+```yaml
+resources:
+  jobs:
+    pipeline_job:
+      name: pipline_${bundle.target}
+      
+      trigger:
+        periodic:
+          interval: 1
+          unit: DAYS
+      
+      tasks:
+        - task_key: bronze_task
+          notebook_task:
+            notebook_path: ../bronze_Netflix/bronze_fw_auto_loader_config.ipynb
+            base_parameters:
+              pipeline_name: netflix_auto_loader
+          environment_key: default
+        
+        - task_key: silver_task
+          depends_on:
+            - task_key: bronze_task
+          notebook_task:
+            notebook_path: ../silver_Netflix/silver_fw_config.ipynb
+            base_parameters:
+              pipeline_name: netflix
+          environment_key: default
+        
+        - task_key: gold_task
+          depends_on:
+            - task_key: silver_task
+          notebook_task:
+            notebook_path: ../gold_Netflix/gold_fw_config.ipynb
+            base_parameters:
+              pipeline_name: netflix
+          environment_key: default
+      
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies: ${var.package_dependencies}
+```
+
+### การสร้าง Python Package
+
+เฟรมเวิร์กถูกแพคเกจเป็น Python wheel เพื่อความสามารถในการนำกลับใช้:
+
+**ไฟล์**: `Netflix_project/logic_packages/pyproject.toml`
+
+```toml
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dabs_local_package"
+version = "0.1.0"
+description = "Unified fw"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+```
+
+**คำสั่งสร้าง**:
+```bash
+cd Netflix_project/logic_packages
+pip wheel . --no-deps -w dist/
+```
+
+**ผลลัพธ์**: `dist/dabs_local_package-0.1.0-py3-none-any.whl`
+
+### คำสั่งปรับใช้
+
+```bash
+# ตรวจสอบการตั้งค่า bundle
+databricks bundle validate --target prod
+
+# ปรับใช้ bundle ไปยัง workspace
+databricks bundle deploy --target prod
+
+# รันไปป์ไลน์ job
+databricks bundle run pipeline_job --target prod
+```
+
+### ประโยชน์หลัก
+
+✅ **Infrastructure as Code**: การตั้งค่าการปรับใช้ที่ควบคุมเวอร์ชัน  
+✅ **การสร้างอัตโนมัติ**: Python package ถูกสร้างและปรับใช้โดยอัตโนมัติ  
+✅ **การจัดการสภาพแวดล้อม**: สภาพแวดล้อม prod แยกกันพร้อม dependencies  
+✅ **การจัดการงาน**: ลำดับ dependency Bronze → Silver → Gold  
+✅ **การทำงานอัตโนมัติ**: การรันรายวันอัตโนมัติ  
+✅ **ความสามารถทำซ้ำ**: การปรับใช้ที่สม่ำเสมอในแต่ละสภาพแวดล้อม  
+
+---
+
 ## 🚀 เริ่มต้นใช้งาน
 
 ### ข้อกำหนดเบื้องต้น

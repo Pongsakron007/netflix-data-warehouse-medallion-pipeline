@@ -388,7 +388,7 @@ targets:
     artifacts:
       default:
         type: whl
-        build: python3 -m build
+        build: pip wheel . --no-deps -w dist/
         path: ./Netflix_project/logic_packages/
     variables:
       catalog: prod
@@ -462,14 +462,14 @@ name = "dabs_local_package"
 version = "0.1.0"
 description = "Unified fw"
 
-[tools.setuptools.packages.find]
+[tool.setuptools.packages.find]
 where = ["src"]
 ```
 
 **Build command**:
 ```bash
 cd Netflix_project/logic_packages
-python3 -m build
+pip wheel . --no-deps -w dist/
 ```
 
 **Output**: `dist/dabs_local_package-0.1.0-py3-none-any.whl`
@@ -680,7 +680,7 @@ INSERT INTO workspace.netflix.config_table VALUES (
 
 ```bash
 cd Netflix_project/logic_packages
-python3 -m build
+pip wheel . --no-deps -w dist/
 # Output: dist/dabs_local_package-0.1.0-py3-none-any.whl
 ```
 
