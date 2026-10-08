@@ -522,6 +522,7 @@ class SilverLayer:
             .filter(col(target_col_name) != "")
             .withColumn(id_col_name, sha2(col(target_col_name), 256))
             .select("show_id", "title_version_sk", id_col_name)
+            .dropDuplicates(["title_version_sk", id_col_name])
         )
 
     def load_sub_dimensions(self, final_df: DataFrame, batch_id: int = None) -> None:

@@ -567,10 +567,6 @@ class TestSilverLayerWithMocks(unittest.TestCase):
         self.assertEqual(final_df.count(), 1)
         self.assertEqual(final_df.first()["show_id"], "s123")
 
-    def test_something_else(self):
-        """Test something else. Like gold layer a bit further down the pipeline. Should test something else"""
-        pass
-
 
 class TestHashAndVersionKeys(unittest.TestCase):
     """Tests for relationship-aware hash_value, title_version_sk determinism, and bridge/Gold logic."""
@@ -837,6 +833,85 @@ class TestHashAndVersionKeys(unittest.TestCase):
         # date_added column should still be in the result
         result = self.silver.get_hash_key_value(self._create_test_df([row_v1]))
         self.assertIn("date_added", result.columns)
+
+    def test_empty_string_vs_whitespace_normalized_same(self):
+        """Empty string and whitespace-only relationship values should normalize to the same hash.
+
+        The normalization logic (split -> trim -> filter empty -> initcap -> sort -> join)
+        should treat "", "   ", and values with only empty comma-delimited elements consistently.
+        """
+        base_row = ("s1", "Movie", "T", "Tom, John", "Tom, John", "USA",
+                    "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 1)
+
+        # Empty string for all relationship columns
+        row_empty = ("s1", "Movie", "T", "", "", "",
+                     "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 2)
+
+        # Whitespace-only for all relationship columns
+        row_whitespace = ("s1", "Movie", "T", "   ", "   ", "   ",
+                          "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 3)
+
+        # Empty comma-delimited elements for all relationship columns
+        row_empty_elements = ("s1", "Movie", "T", ", ,", ", ,", ", ,",
+                               "January 1, 2020", "2020", "R", "120 min", "Drama", "X", 4)
+
+        hash_empty = self._get_hash_value(self._create_test_df([row_empty]))
+        hash_whitespace = self._get_hash_value(self._create_test_df([row_whitespace]))
+        hash_empty_elements = self._get_hash_value(self._create_test_df([row_empty_elements]))
+
+        self.assertEqual(hash_empty, hash_whitespace,
+                         "Empty string and whitespace-only should normalize to the same hash")
+        self.assertEqual(hash_empty, hash_empty_elements,
+                         "Empty string and comma-delimited empty elements should normalize to the same hash")
+
+    def test_duplicate_relationship_members_bridge_dedup(self):
+        """Duplicate relationship members (e.g., 'Tom, Tom, John') should not produce duplicate bridge rows.
+
+        The bridge transform (_transform_and_explode_bridge) must deduplicate on
+        (title_version_sk, relationship_id) so that duplicate members in the source
+        do not create duplicate bridge rows.
+        """
+        # Create a DataFrame with duplicate cast members
+        schema = StructType([
+            StructField("show_id", StringType(), True),
+            StructField("type", StringType(), True),
+            StructField("title", StringType(), True),
+            StructField("director", StringType(), True),
+            StructField("cast", StringType(), True),
+            StructField("country", StringType(), True),
+            StructField("date_added", StringType(), True),
+            StructField("release_year", StringType(), True),
+            StructField("rating", StringType(), True),
+            StructField("duration", StringType(), True),
+            StructField("listed_in", StringType(), True),
+            StructField("description", StringType(), True),
+            StructField("_sk", LongType(), True)
+        ])
+        row = ("s1", "Movie", "Test", "Dir A", "Tom, Tom, John", "USA",
+               "January 1, 2020", "2020", "R", "120 min", "Drama", "Desc", 1)
+        df = self.spark.createDataFrame([row], schema)
+
+        # Get hash columns (needed for title_version_sk)
+        df_with_hash = self.silver.get_hash_key_value(df)
+
+        # Run the bridge transform
+        bridge_df = self.silver._transform_and_explode_bridge(
+            df_with_hash, "cast", "cast_name", "cast_id"
+        )
+
+        total_rows = bridge_df.count()
+        distinct_rows = bridge_df.distinct().count()
+
+        # Should have exactly 2 distinct bridge rows: Tom and John (duplicate Tom deduplicated)
+        self.assertEqual(total_rows, 2,
+                         f"Bridge should have 2 rows (Tom, John) after dedup, got {total_rows}")
+        self.assertEqual(total_rows, distinct_rows,
+                         "Bridge should have no duplicate rows")
+
+        # Verify the cast_id values are distinct
+        cast_ids = [row["cast_id"] for row in bridge_df.collect()]
+        self.assertEqual(len(cast_ids), len(set(cast_ids)),
+                         "All cast_id values in bridge should be distinct")
 
 
 if __name__ == '__main__':
