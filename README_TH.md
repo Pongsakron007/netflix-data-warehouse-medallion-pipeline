@@ -965,7 +965,11 @@ bronze.s3_auto_loader(checkpoint_location="<new_checkpoint_path>")
 
 #### ปัญหา 2: SCD Type 2 ไม่สร้างเวอร์ชันใหม่
 
-**อาการ**: การเปลี่ยนแปลงไม่ปรากฏเป็นบันทึกใหม่ด้วย `active_flag = TRUE`
+ปัญหานี้มี 2 กรณีแยกกัน ขึ้นอยู่กับว่าคอลัมน์ใดที่เปลี่ยนแปลง
+
+##### กรณีที่ 1: พื้นฐาน — Hash ไม่รวมคอลัมน์ข้อมูลสเกลาร์
+
+**อาการ**: การเปลี่ยนแปลงคอลัมน์สเกลาร์ (เช่น `title`, `rating`, `duration`) ไม่ปรากฏเป็นบันทึกใหม่ด้วย `active_flag = TRUE`
 
 **สาเหตุ**:
 - ค่า Hash ไม่เปลี่ยนแปลง (คอลัมน์ไม่รวมใน hash)
@@ -986,6 +990,53 @@ print("คอลัมน์ใน hash_value:", hash_columns)
 # รันชั้น Silver ใหม่
 silver.process_cdf_stream_to_silver()
 ```
+
+##### กรณีที่ 2: ขั้นสูง — การเปลี่ยนแปลงเฉพาะความสัมพันธ์ไม่ถูกตรวจจับ (cast, director, country, listed_in)
+
+**อาการ**: เมื่อมีการเปลี่ยนแปลงเฉพาะคอลัมน์ความสัมพันธ์ (`cast`, `director`, `country`, `listed_in`) ใน Bronze SCD2 ไม่สร้างเวอร์ชันใหม่ — เวอร์ชันเดิมยังคง active โดยไม่มีบันทึกใหม่
+
+**สาเหตุหลัก — ทำไมคอลัมน์ความสัมพันธ์ต้องอยู่ใน `hash_value`**:
+
+`get_hash_key_value()` ดั้งเดิม hash เฉพาะคอลัมน์สเกลาร์ (`type`, `title`, `release_year`, `rating`, `duration`, `description`) คอลัมน์ความสัมพันธ์ถูก **แยก (explode)** ไปเป็น sub-dimensions และ bridge tables แต่ **ไม่รวม** ใน `hash_value` ทำให้:
+
+- หาก `cast` เปลี่ยนจาก "Actor A, Actor B" เป็น "Actor A, Actor C" ค่า `hash_value` จะเหมือนเดิม
+- SCD2 MERGE ไม่พบความแตกต่าง → ไม่มีเวอร์ชันใหม่ถูกสร้างขึ้น
+- ตาราง bridge ถูกสร้างใหม่ด้วยความสัมพันธ์ใหม่ แต่ชี้ไปยังแถว dimension **เก่า** (ที่ยัง active) ทำให้เกิดความไม่ตรงกันระหว่าง dimension และ bridge
+
+**ทำไมต้องทำให้เป็นมาตรฐานก่อน hash**:
+
+คอลัมน์ความสัมพันธ์เป็นสตริงคั่นด้วยจุลภาค (เช่น `"Actor B, Actor A, Actor C"`) ชุดนักแสดงเดียวกันอาจปรากฏในลำดับที่แตกต่างกันในแต่ละการอัปเดต เพื่อให้ hash เป็น **อิสระจากลำดับ** แต่ **ไวต่อชุด** คอลัมน์เหล่านี้ถูกทำให้เป็นมาตรฐานก่อน hash:
+
+```
+split → trim → initcap → filter empty → sort → join
+```
+
+ทำให้:
+- การสลับลำดับนักแสดง **ไม่** เปลี่ยน hash (หลีกเลี่ยง false positive)
+- การเพิ่ม/ลดนักแสดง **เปลี่ยน** hash (ตรวจจับการเปลี่ยนแปลงจริง)
+
+**ทำไมต้องมี `title_version_sk`**:
+
+ตาราง bridge เดิมใช้ `_sk` — ID ชั่วคราวที่เพิ่มขึ้นทีละหน่วยและเปลี่ยนทุกครั้งที่รันไปป์ไลน์ ทำให้บรรทัด bridge ไม่สามารถเชื่อมโยงกับเวอร์ชัน SCD2 เฉพาะเจาะจงได้ การแก้ไขแนะนำ `title_version_sk`:
+
+```python
+title_version_sk = sha2(concat_ws('||', hash_key, hash_value), 256)
+```
+
+- **กำหนดได้**: เนื้อหาเดียวกันผลิต SK เดียวกันเสมอ — ข้ามการรัน ข้ามสภาพแวดล้อม
+- **เฉพาะเวอร์ชัน**: การเปลี่ยนแปลงเนื้อหาใด ๆ (รวมถึงเฉพาะความสัมพันธ์) ผลิต SK ที่แตกต่างกัน
+- **การเชื่อมโยง bridge**: ตาราง bridge ทั้ง 4 ใช้ `title_version_sk` แทน `show_id` เชื่อมโยงบรรทัด bridge ไปยังเวอร์ชัน SCD2 ที่ถูกต้อง
+- **Gold joins**: `create_gold_content_by_cast()` join `dim_titles_silver ⋈ bridge_title_cast_silver` บน `title_version_sk` รับประกันว่า Gold สะท้อนเวอร์ชันที่ถูกต้อง
+
+**การแก้ไขที่ทำ** — 5 การเปลี่ยนแปลงใน `fw.py`:
+
+1. **การ hash ที่รับรู้ความสัมพันธ์** ใน `get_hash_key_value()`: คอลัมน์ความสัมพันธ์ถูกทำให้เป็นมาตรฐาน (split → trim → initcap → filter → sort → join) และรวมใน `hash_value`
+2. **`title_version_sk` ที่กำหนดได้**: `sha2(concat_ws('||', hash_key, hash_value), 256)` แทน `_sk` ชั่วคราว
+3. **ตาราง bridge ใช้ `title_version_sk`**: ตาราง bridge ทั้ง 4 เชื่อมโยงกับเวอร์ชัน SCD2 เฉพาะเจาะจง
+4. **ชั้น Gold join บน `title_version_sk`**: `create_gold_content_by_cast()` join บน SK เวอร์ชัน
+5. **ลำดับการเขียน: dimension ก่อน bridges**: `load_to_silver_layer()` (SCD2 dimension) ทำงานก่อน `load_bridge_tables()`
+
+> **หมายเหตุ**: ดูรายละเอียดเพิ่มเติมและโค้ดตรวจสอบได้ที่ **ปัญหา 8** ด้านล่าง
 
 #### ปัญหา 3: ข้อมูลไม่ถูกต้องไม่ถูกจับ
 

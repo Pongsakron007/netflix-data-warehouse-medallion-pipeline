@@ -987,7 +987,11 @@ bronze.s3_auto_loader(checkpoint_location="<new_checkpoint_path>")
 
 #### Issue 2: SCD Type 2 Not Creating New Versions
 
-**Symptoms**: Changes not reflected as new records with `active_flag = TRUE`
+This issue has two distinct cases depending on which columns changed.
+
+##### Case 1: Basic — Hash Excludes Scalar Data Columns
+
+**Symptoms**: Changes to scalar columns (e.g., `title`, `rating`, `duration`) not reflected as new records with `active_flag = TRUE`
 
 **Causes**:
 - Hash values not changing (columns excluded from hash)
@@ -1008,6 +1012,76 @@ print("Columns in hash_value:", hash_columns)
 # Re-run Silver layer
 silver.process_cdf_stream_to_silver()
 ```
+
+##### Case 2: Advanced — Relationship-Only Changes Not Detected (cast, director, country, listed_in)
+
+**Symptoms**: When only relationship columns (`cast`, `director`, `country`, `listed_in`) change in Bronze, SCD2 does **not** create a new version — the old record remains active with no new row inserted.
+
+**Root Cause — Why relationship columns must be in `hash_value`**:
+
+The original `get_hash_key_value()` only hashed scalar columns (`type`, `title`, `release_year`, `rating`, `duration`, `description`). The relationship columns (`cast`, `director`, `country`, `listed_in`) were **exploded** into sub-dimensions and bridge tables but were **excluded** from `hash_value`. This meant:
+
+- If a title's `cast` changed from "Actor A, Actor B" to "Actor A, Actor C", the `hash_value` stayed identical
+- The SCD2 MERGE found no hash difference → no new version was created
+- The bridge tables were rebuilt with new relationships, but they pointed to the **old** (still-active) dimension row, creating a mismatch between the dimension and its bridges
+
+**Why normalization is required before hashing**:
+
+Relationship columns are comma-separated strings (e.g., `"Actor B, Actor A, Actor C"`). The same set of actors could appear in different order across data updates. To make the hash **order-independent** but **set-sensitive**, the columns are normalized before hashing:
+
+```
+split → trim → initcap → filter empty → sort → join with delimiter
+```
+
+This ensures:
+- Reordering actors does **not** change the hash (false positive avoided)
+- Adding or removing an actor **does** change the hash (true change detected)
+
+**Why `title_version_sk` is required**:
+
+The old bridge tables used `_sk` — a temporary, incrementing ID that changes on every pipeline run. This meant bridge rows could **not** be linked to a specific SCD2 version of the dimension. The fix introduces `title_version_sk`:
+
+```python
+title_version_sk = sha2(concat_ws('||', hash_key, hash_value), 256)
+```
+
+- **Deterministic**: the same content always produces the same SK — across runs, across environments
+- **Version-specific**: any content change (including relationship-only changes) produces a different SK
+- **Bridge linkage**: all 4 bridge tables use `title_version_sk` instead of `show_id`, linking bridge rows to the exact SCD2 version they belong to
+- **Gold joins**: `create_gold_content_by_cast()` joins `dim_titles_silver ⋈ bridge_title_cast_silver` on `title_version_sk`, ensuring Gold reflects the correct version of relationships
+
+**Fix Applied** — 5 changes in `fw.py`:
+
+1. **Relationship-aware hashing** in `get_hash_key_value()`: relationship columns are normalized (split → trim → initcap → filter → sort → join) and included in `hash_value`
+2. **Deterministic `title_version_sk`**: `sha2(concat_ws('||', hash_key, hash_value), 256)` replaces temporary `_sk`
+3. **Bridge tables use `title_version_sk`**: all 4 bridges link to the specific SCD2 version
+4. **Gold layer joins on `title_version_sk`**: `create_gold_content_by_cast()` joins on the versioned SK
+5. **Write order: dimension before bridges**: `load_to_silver_layer()` (SCD2 dimension) runs before `load_bridge_tables()`
+
+**Verification**:
+```python
+# Verify that a relationship-only change produces a new SCD2 version
+from pyspark.sql.functions import col
+
+# Before change: s1 has 1 active version
+spark.table("workspace.netflix.dim_titles_silver").filter(col("show_id") == "s1").show()
+
+# After updating cast in Bronze and re-running Silver CDF stream:
+# - Old version: active_flag = False, end_date set
+# - New version: active_flag = True, different title_version_sk
+# - Bridge table has rows for the new title_version_sk
+
+active = spark.table("workspace.netflix.dim_titles_silver").filter(col("show_id") == "s1").filter(col("active_flag") == True)
+inactive = spark.table("workspace.netflix.dim_titles_silver").filter(col("show_id") == "s1").filter(col("active_flag") == False)
+print(f"Active: {active.count()}, Inactive: {inactive.count()}")
+# Expected: Active: 1, Inactive: 1
+```
+
+**Affected Files**:
+- `fw.py` — `get_hash_key_value()`, `load_to_silver_layer()`, `_transform_and_explode_bridge()`, `load_bridge_tables()`, GoldLayer `create_gold_content_by_cast()`
+- `_ddl_Netflix.ipynb` — `dim_titles_silver` adds `title_version_sk`; all 4 bridge tables replace `show_id` with `title_version_sk`
+- `silver_unit_test.py` — 17 new tests for relationship hashing (order-invariance, set-sensitivity, determinism)
+- `gold_unit_test.py` — updated mock schemas with `title_version_sk` column
 
 #### Issue 3: Bad Records Not Captured
 
