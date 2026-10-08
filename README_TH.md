@@ -136,7 +136,7 @@
 
 **ตารางพร้อมใช้งานทางธุรกิจ**:
 1. `create_gold_content_by_cast()` - ความสัมพันธ์ Title-Cast แบบ Denormalized
-   - **Joins**: `dim_titles_silver` ⋈ `bridge_title_cast_silver` ⋈ `dim_cast_silver`
+   - **Joins**: `dim_titles_silver` ⋈ `bridge_title_cast_silver` (บน `title_version_sk`) ⋈ `dim_cast_silver`
    - **ผลลัพธ์**: หนึ่งแถวต่อคู่ Title-Cast หนึ่งคู่
    - **คำถามทางธุรกิจ**: "นักแสดงคนไหนแสดงในเรื่องอะไรบ้าง?"
 
@@ -308,7 +308,7 @@ gold = GoldLayer.from_config_table("netflix")
 
 #### ตาราง Denormalized:
 - `create_gold_content_by_cast()` - แบนความสัมพันธ์ Title-Cast แบบ Many-to-Many
-  - Joins: `dim_titles_silver` ⋈ `bridge_title_cast_silver` ⋈ `dim_cast_silver`
+  - Joins: `dim_titles_silver` ⋈ `bridge_title_cast_silver` (บน `title_version_sk`) ⋈ `dim_cast_silver`
   - ผลลัพธ์: หนึ่งแถวต่อคู่ Title-Cast หนึ่งคู่
   - คำถามทางธุรกิจ: "นักแสดงคนไหนแสดงในเรื่องอะไรบ้าง?"
 
@@ -336,6 +336,7 @@ gold = GoldLayer.from_config_table("netflix")
 | คอลัมน์ | ชนิด | คำอธิบาย |
 |--------|------|---------|
 | `title_sk` | BIGINT | Surrogate key (สร้างอัตโนมัติ) |
+| `title_version_sk` | STRING | SHA-256 ของ hash_key + hash_value (คีย์เวอร์ชันเนื้อหา SCD2) |
 | `show_id` | STRING | Business key จากแหล่งข้อมูล |
 | `type` | STRING | ภาพยนตร์หรือซีรีส์ |
 | `title` | STRING | ชื่อเรื่อง |
@@ -369,16 +370,16 @@ gold = GoldLayer.from_config_table("netflix")
 ### ตาราง Bridge (ความสัมพันธ์แบบ Many-to-Many)
 
 **bridge_title_cast_silver** (ความสัมพันธ์ 128,818 รายการ):
-- `show_id`, `cast_id`
+- `show_id`, `title_version_sk`, `cast_id`
 
 **bridge_title_director_silver** (ความสัมพันธ์ 14,039 รายการ):
-- `show_id`, `director_id`
+- `show_id`, `title_version_sk`, `director_id`
 
 **bridge_title_country_silver** (ความสัมพันธ์ 20,110 รายการ):
-- `show_id`, `country_id`
+- `show_id`, `title_version_sk`, `country_id`
 
 **bridge_title_category_silver** (ความสัมพันธ์ 38,848 รายการ):
-- `show_id`, `category_id`
+- `show_id`, `title_version_sk`, `category_id`
 
 ### ตารางตรวจสอบ: `netflix_bronze_bad_record`
 
@@ -408,7 +409,8 @@ gold = GoldLayer.from_config_table("netflix")
           bridge_title_director                            bridge_title_cast
           ┌──────────────────────┐                         ┌──────────────────┐
           │ FK  │ show_id        │                         │ FK  │ show_id    │
-          │ FK  │ director_id    │                         │ FK  │ cast_id    │
+          │ FK  │ title_ver_sk   │                         │ FK  │ title_v_sk │
+           │ FK  │ director_id    │                         │ FK  │ cast_id    │
           └──────────┬───────────┘                         └────────┬─────────┘
                      │                                              │
                      │                                              │
@@ -425,7 +427,8 @@ gold = GoldLayer.from_config_table("netflix")
                          │           │ release_year, rating       │
                          │           │ duration, description      │
                          │ SCD       │ hash_key, hash_value       │
-                         │ Type 2    │ active_flag                │
+                         │ Type 2    │ title_version_sk            │
+                          │           │ active_flag                │
                          │           │ start_date, end_date       │
                          └───────────┬───────────────┬────────────┘
                      ∞ (Many)        │               │ ∞ (Many)
@@ -434,7 +437,8 @@ gold = GoldLayer.from_config_table("netflix")
           bridge_title_country                              bridge_title_category
           ┌──────────────────────┐                         ┌──────────────────┐
           │ FK  │ show_id        │                         │ FK  │ show_id    │
-          │ FK  │ country_id     │                         │ FK  │ category_id│
+          │ FK  │ title_ver_sk   │                         │ FK  │ title_v_sk │
+           │ FK  │ country_id     │                         │ FK  │ category_id│
           └──────────┬───────────┘                         └────────┬─────────┘
                      │                                              │
                      │ (1)                                          │ (1)
@@ -671,7 +675,7 @@ spark.sql("""
         c.cast_name
     FROM workspace.netflix.dim_titles_silver t
     INNER JOIN workspace.netflix.bridge_title_cast_silver b 
-        ON t.show_id = b.show_id
+        ON t.title_version_sk = b.title_version_sk
     INNER JOIN workspace.netflix.dim_cast_silver c 
         ON b.cast_id = c.cast_id
     WHERE t.active_flag = TRUE
@@ -949,6 +953,64 @@ tests.test_scd_type2_change_detection()
 3. ล้าง Auto Loader checkpoint: `dbutils.fs.rm("/Volumes/workspace/netflix/checkpoint_dir/workspace.netflix.netflix_bronze/", recurse=True)`
 4. ล้าง Silver checkpoint: `dbutils.fs.rm("/Volumes/workspace/netflix/checkpoint_dir/workspace.netflix.netflix_silver/", recurse=True)`
 5. รันไปป์ไลน์ใหม่จากเซลล์ 1
+
+#### ปัญหา 8: SCD Type 2 ไม่ตรวจจับการเปลี่ยนแปลงเฉพาะความสัมพันธ์ (cast, director, country, listed_in)
+
+**อาการ**: เมื่อมีการเปลี่ยนแปลงเฉพาะคอลัมน์ความสัมพันธ์ (cast, director, country, listed_in) ใน Bronze SCD2 ไม่สร้างเวอร์ชันใหม่ — เวอร์ชันเดิมยังคง active โดยไม่มีบันทึกใหม่
+
+**สาเหตุ**: `get_hash_key_value()` ดั้งเดิมไม่รวมคอลัมน์ความสัมพันธ์แบบหลายค่าใน `hash_value` มีเพียงคอลัมน์สเกลาร์ (type, title, release_year, rating, duration, description) ที่ถูก hash ดังนั้นหากเปลี่ยนเฉพาะรายชื่อนักแสดง `hash_value` จะไม่เปลี่ยนแปลง และ SCD2 MERGE ไม่พบการเปลี่ยนแปลง — ไม่มีเวอร์ชันใหม่ถูกสร้างขึ้น
+
+นอกจากนี้ ตาราง bridge ใช้ `_sk` (ID ที่เพิ่มขึ้นทีละหน่วยแบบชั่วคราว) แทนที่จะเป็นคีย์เวอร์ชันที่กำหนดได้ ทำให้บรรทัด bridge ไม่สามารถเชื่อมโยงกับเวอร์ชัน SCD2 เฉพาะเจาะจงได้
+
+**การแก้ไขที่ทำ** — 5 การเปลี่ยนแปลงใน `fw.py`:
+
+1. **การ hash ที่รับรู้ความสัมพันธ์** ใน `get_hash_key_value()`:
+   - คอลัมน์ความสัมพันธ์ (cast, director, country, listed_in) ถูกทำให้เป็นมาตรฐาน: `split → trim → initcap → filter empty → sort → join`
+   - ทำให้ hash เป็นอิสระจากลำดับ (การสลับลำดับนักแสดงไม่เปลี่ยน hash) แต่ไวต่อชุด (การเพิ่ม/ลบสมาชิกเปลี่ยน hash)
+   - ค่าที่ทำให้เป็นมาตรฐานถูกรวมใน `hash_value`
+
+2. **`title_version_sk` ที่กำหนดได้**:
+   - `title_version_sk = sha2(concat_ws('||', hash_key, hash_value), 256)`
+   - แทนสถานะเนื้อหาเชิงตรรกะ — เนื้อหาเดียวกันผลิต SK เดียวกันเสมอ
+   - ต่างจาก `_sk` ชั่วคราวที่เปลี่ยนทุกครั้งที่รัน
+
+3. **ตาราง bridge ใช้ `title_version_sk`**:
+   - ตาราง bridge ทั้ง 4 ตารางใช้ `title_version_sk` แทน `show_id` เป็นคีย์เวอร์ชัน
+   - บรรทัด bridge เชื่อมโยงกับเวอร์ชัน SCD2 เฉพาะเจาะจง
+   - เมื่อสร้างเวอร์ชัน SCD2 ใหม่ บรรทัด bridge ใหม่จะถูกแทรกสำหรับเวอร์ชันใหม่
+
+4. **ชั้น Gold join บน `title_version_sk`**:
+   - `create_gold_content_by_cast()` join `dim_titles_silver ⋈ bridge_title_cast_silver` บน `title_version_sk`
+   - รับประกันว่า Gold สะท้อนเวอร์ชันที่ถูกต้องของความสัมพันธ์
+
+5. **ลำดับการเขียน: dimension ก่อน bridges**:
+   - `load_to_silver_layer()` (SCD2 dimension) ทำงานก่อน `load_bridge_tables()`
+   - รับประกันว่า `title_version_sk` มีอยู่ใน dimension ก่อนที่บรรทัด bridge จะอ้างอิง
+
+**การตรวจสอบ**:
+```python
+# ตรวจสอบว่าการเปลี่ยนแปลงเฉพาะความสัมพันธ์ผลิตเวอร์ชัน SCD2 ใหม่
+from pyspark.sql.functions import col
+
+# ก่อนเปลี่ยน: s1 มี 1 เวอร์ชัน active
+spark.table("workspace.netflix.dim_titles_silver").filter(col("show_id") == "s1").show()
+
+# หลังจากอัปเดต cast ใน Bronze และรัน Silver CDF stream ใหม่:
+# - เวอร์ชันเก่า: active_flag = False, end_date ถูกกำหนด
+# - เวอร์ชันใหม่: active_flag = True, title_version_sk ต่างกัน
+# - ตาราง bridge มีบรรทัดสำหรับ title_version_sk ใหม่
+
+active = spark.table("workspace.netflix.dim_titles_silver").filter(col("show_id") == "s1").filter(col("active_flag") == True)
+inactive = spark.table("workspace.netflix.dim_titles_silver").filter(col("show_id") == "s1").filter(col("active_flag") == False)
+print(f"Active: {active.count()}, Inactive: {inactive.count()}")
+# คาดหวัง: Active: 1, Inactive: 1
+```
+
+**ไฟล์ที่ได้รับผลกระทบ**:
+- `fw.py` — `get_hash_key_value()`, `load_to_silver_layer()`, `_transform_and_explode_bridge()`, `load_bridge_tables()`, GoldLayer `create_gold_content_by_cast()`
+- `_ddl_Netflix.ipynb` — `dim_titles_silver` เพิ่มคอลัมน์ `title_version_sk`; ตาราง bridge ทั้ง 4 แทนที่ `show_id` ด้วย `title_version_sk`
+- `silver_unit_test.py` — 17 การทดสอบใหม่สำหรับ relationship hashing (order-invariance, set-sensitivity, determinism)
+- `gold_unit_test.py` — อัปเดต mock schemas ด้วยคอลัมน์ `title_version_sk`
 
 ---
 
