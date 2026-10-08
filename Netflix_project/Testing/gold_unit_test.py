@@ -70,6 +70,7 @@ class TestGoldLayerWithMocks(unittest.TestCase):
         """Helper to create mock titles DataFrame."""
         schema = StructType([
             StructField("show_id", StringType(), True),
+            StructField("title_version_sk", StringType(), True),
             StructField("title", StringType(), True),
             StructField("type", StringType(), True),
             StructField("release_year", IntegerType(), True),
@@ -78,9 +79,9 @@ class TestGoldLayerWithMocks(unittest.TestCase):
         
         if data is None:
             data = [
-                ("s1", "Stranger Things", "TV Show", 2016, True),
-                ("s2", "The Crown", "TV Show", 2016, True),
-                ("m1", "Bird Box", "Movie", 2018, True)
+                ("s1", "sk_s1", "Stranger Things", "TV Show", 2016, True),
+                ("s2", "sk_s2", "The Crown", "TV Show", 2016, True),
+                ("m1", "sk_m1", "Bird Box", "Movie", 2018, True)
             ]
         
         return self.spark.createDataFrame(data, schema)
@@ -105,14 +106,15 @@ class TestGoldLayerWithMocks(unittest.TestCase):
         """Helper to create mock bridge DataFrame."""
         schema = StructType([
             StructField("show_id", StringType(), True),
+            StructField("title_version_sk", StringType(), True),
             StructField("cast_id", IntegerType(), True)
         ])
         
         if data is None:
             data = [
-                ("s1", 1),
-                ("s1", 2),
-                ("s2", 3)
+                ("s1", "sk_s1", 1),
+                ("s1", "sk_s1", 2),
+                ("s2", "sk_s2", 3)
             ]
         
         return self.spark.createDataFrame(data, schema)
@@ -164,8 +166,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
         """Test when all titles are inactive (active_flag=False)."""
         # Create data with all inactive records
         inactive_data = [
-            ("s1", "Old Show", "TV Show", 2010, False),
-            ("s2", "Old Movie", "Movie", 2011, False)
+            ("s1", "sk_s1_old", "Old Show", "TV Show", 2010, False),
+            ("s2", "sk_s2_old", "Old Movie", "Movie", 2011, False)
         ]
         
         titles_df = self._create_mock_titles_df(data=inactive_data)
@@ -196,8 +198,8 @@ class TestGoldLayerWithMocks(unittest.TestCase):
         
         # Bridge references cast_id=999 which doesn't exist in cast table
         invalid_bridge_data = [
-            ("s1", 1),
-            ("s1", 999)  # Invalid cast_id
+            ("s1", "sk_s1", 1),
+            ("s1", "sk_s1", 999)  # Invalid cast_id
         ]
         bridge_df = self._create_mock_bridge_df(data=invalid_bridge_data)
         
@@ -240,10 +242,10 @@ class TestGoldLayerWithMocks(unittest.TestCase):
     def test_yearly_trends_aggregation(self):
         """Test yearly trends produces correct aggregations."""
         test_data = [
-            ("s1", "Show1", "TV Show", 2020, True),
-            ("s2", "Show2", "TV Show", 2020, True),
-            ("m1", "Movie1", "Movie", 2020, True),
-            ("m2", "Movie2", "Movie", 2021, True)
+            ("s1", "sk_s1", "Show1", "TV Show", 2020, True),
+            ("s2", "sk_s2", "Show2", "TV Show", 2020, True),
+            ("m1", "sk_m1", "Movie1", "Movie", 2020, True),
+            ("m2", "sk_m2", "Movie2", "Movie", 2021, True)
         ]
         
         titles_df = self._create_mock_titles_df(data=test_data)
@@ -273,9 +275,9 @@ class TestGoldLayerWithMocks(unittest.TestCase):
     def test_null_values_in_data(self):
         """Test handling of null values in titles."""
         test_data = [
-            ("s1", "Show1", "TV Show", None, True),  # Null release_year
-            ("s2", None, "Movie", 2020, True),       # Null title
-            ("s3", "Show3", "TV Show", 2020, True)   # Valid
+            ("s1", "sk_s1", "Show1", "TV Show", None, True),  # Null release_year
+            ("s2", "sk_s2", None, "Movie", 2020, True),       # Null title
+            ("s3", "sk_s3", "Show3", "TV Show", 2020, True)   # Valid
         ]
         
         titles_df = self._create_mock_titles_df(data=test_data)
@@ -299,14 +301,14 @@ class TestGoldLayerWithMocks(unittest.TestCase):
     def test_duplicate_show_ids(self):
         """Test handling of duplicate show_ids (SCD Type 2 scenario)."""
         test_data = [
-            ("s1", "Show1_v1", "TV Show", 2020, False),  # Old version
-            ("s1", "Show1_v2", "TV Show", 2020, True),   # Current version
-            ("s2", "Show2", "Movie", 2021, True)
+            ("s1", "sk_s1_v1", "Show1_v1", "TV Show", 2020, False),  # Old version
+            ("s1", "sk_s1_v2", "Show1_v2", "TV Show", 2020, True),   # Current version
+            ("s2", "sk_s2", "Show2", "Movie", 2021, True)
         ]
         
         titles_df = self._create_mock_titles_df(data=test_data)
         cast_df = self._create_mock_cast_df()
-        bridge_df = self._create_mock_bridge_df(data=[("s1", 1), ("s2", 2)])
+        bridge_df = self._create_mock_bridge_df(data=[("s1", "sk_s1_v2", 1), ("s2", "sk_s2", 2)])
         
         titles_df.createOrReplaceTempView("dim_titles_silver")
         cast_df.createOrReplaceTempView("dim_cast_silver")
@@ -352,7 +354,7 @@ class TestGoldLayerWithMocks(unittest.TestCase):
         first_count = self.spark.table("test_content_by_cast_gold").count()
         
         # Second run with different data (should overwrite)
-        new_data = [("s99", "New Show", "TV Show", 2025, True)]
+        new_data = [("s99", "sk_s99", "New Show", "TV Show", 2025, True)]
         new_titles = self._create_mock_titles_df(data=new_data)
         new_titles.createOrReplaceTempView("dim_titles_silver")
         
@@ -365,5 +367,5 @@ class TestGoldLayerWithMocks(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    # Run tests with verbosity
-    unittest.main(verbosity=2)
+    # Run tests with verbosity (exit=False prevents SystemExit in Databricks)
+    unittest.main(argv=['first-arg-is-ignored'], exit=False, verbosity=2)
